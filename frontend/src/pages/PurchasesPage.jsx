@@ -456,6 +456,8 @@ function PODetailModal({ po: initialPO, onClose, onRefresh, store }) {
   const [receiving, setReceiving] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [dsForm, setDsForm] = useState({ paymentMethod: 'cash', amountPaid: '', customer: po.customer || { name: '', phone: '', email: '' } });
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [recordingPayment, setRecordingPayment] = useState(false);
 
   const isDS = po.type === 'direct_sale';
   const locked = ['received', 'cancelled', 'direct_sale'].includes(po.status);
@@ -495,11 +497,24 @@ function PODetailModal({ po: initialPO, onClose, onRefresh, store }) {
         amountPaid: dsForm.amountPaid || undefined,
         customer: dsForm.customer,
       });
-      setPO(res.data.data);
+      setPO(res.data);
       toast.success('Direct sale completed — sale record created');
       onRefresh();
     } catch (err) { toast.error(err?.message || 'Failed'); }
     finally { setCompleting(false); }
+  };
+
+  const handleRecordPayment = async () => {
+    if (!paymentAmount || Number(paymentAmount) <= 0) return toast.error('Enter a valid amount');
+    setRecordingPayment(true);
+    try {
+      const res = await api.patch(`/purchases/${po._id}/payment`, { amount: Number(paymentAmount) });
+      setPO(res.data);
+      setPaymentAmount('');
+      toast.success('Payment recorded');
+      onRefresh();
+    } catch (err) { toast.error(err?.message || 'Failed'); }
+    finally { setRecordingPayment(false); }
   };
 
   return (
@@ -526,8 +541,8 @@ function PODetailModal({ po: initialPO, onClose, onRefresh, store }) {
 
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)', padding: '0 20px' }}>
-          {['details', isDS ? 'complete' : 'receive', 'status'].map(t => {
-            const label = t === 'complete' ? 'Complete Sale' : t === 'receive' ? 'Receive Items' : t.charAt(0).toUpperCase() + t.slice(1);
+          {['details', isDS ? 'complete' : 'receive', ...(!isDS ? ['payment'] : []), 'status'].map(t => {
+            const label = t === 'complete' ? 'Complete Sale' : t === 'receive' ? 'Receive Items' : t === 'payment' ? 'Payment' : t.charAt(0).toUpperCase() + t.slice(1);
             return (
               <button key={t} onClick={() => setTab(t)}
                 style={{ padding: '10px 16px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
@@ -730,6 +745,51 @@ function PODetailModal({ po: initialPO, onClose, onRefresh, store }) {
             </>
           )}
 
+          {/* ── Payment Tab (Standard PO) ── */}
+          {tab === 'payment' && !isDS && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+                {[
+                  { label: 'Total Amount', value: fmt(po.grandTotal), color: 'var(--text-primary)' },
+                  { label: 'Paid', value: fmt(po.paidAmount || 0), color: 'var(--green)' },
+                  { label: 'Remaining', value: fmt(Math.max(0, po.grandTotal - (po.paidAmount || 0))), color: (po.paidAmount || 0) >= po.grandTotal ? 'var(--green)' : 'var(--red)' },
+                ].map(s => (
+                  <div key={s.label} style={{ background: 'var(--bg-tertiary)', borderRadius: 8, padding: '12px 16px', border: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{s.label}</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: s.color, fontFamily: 'var(--font-mono)' }}>{s.value}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 6, background: PAY_META[po.paymentStatus]?.cls === 'badge-green' ? '#d1fae520' : PAY_META[po.paymentStatus]?.cls === 'badge-yellow' ? '#fef3c720' : '#fee2e220', width: 'fit-content' }}>
+                <span className={`badge ${PAY_META[po.paymentStatus]?.cls}`}>{po.paymentStatus}</span>
+              </div>
+              {po.paymentStatus !== 'paid' && po.status !== 'cancelled' ? (
+                <div style={{ background: 'var(--bg-tertiary)', borderRadius: 8, padding: '16px', border: '1px solid var(--border)', maxWidth: 360 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 12, color: 'var(--text-primary)' }}>Record Payment</div>
+                  <div className="form-group">
+                    <label className="form-label">Amount (Rs)</label>
+                    <input className="form-input" type="number" step="0.01" min="0.01"
+                      placeholder={`Max: ${fmt(Math.max(0, po.grandTotal - (po.paidAmount || 0)))}`}
+                      value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} />
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                    <button className="btn btn-ghost btn-sm" onClick={() => setPaymentAmount(String(Math.max(0, po.grandTotal - (po.paidAmount || 0)).toFixed(2)))}>
+                      Full Amount
+                    </button>
+                  </div>
+                  <button className="btn btn-primary" style={{ marginTop: 12, width: '100%' }} onClick={handleRecordPayment} disabled={recordingPayment}>
+                    {recordingPayment ? <span className="spinner" /> : '✓ Record Payment'}
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', background: '#d1fae520', border: '1px solid var(--green)', borderRadius: 8 }}>
+                  <Check size={18} color="var(--green)" />
+                  <span style={{ color: 'var(--green)', fontWeight: 600 }}>Fully paid</span>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* ── Status Tab ── */}
           {tab === 'status' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -746,9 +806,15 @@ function PODetailModal({ po: initialPO, onClose, onRefresh, store }) {
                       <ArrowRight size={14} /> Mark as Ordered (sent to vendor)
                     </button>
                   )}
-                  {!['cancelled', 'draft'].includes(po.status) && (
+                  {!isDS && ['ordered', 'partial'].includes(po.status) && (
+                    <button className="btn btn-primary" style={{ alignSelf: 'flex-start' }} disabled={changingStatus}
+                      onClick={() => changeStatus('received')}>
+                      <Package size={14} /> Mark as Fully Received
+                    </button>
+                  )}
+                  {isDS && !['cancelled', 'draft'].includes(po.status) && (
                     <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-                      To receive items or complete the sale, use the {isDS ? 'Complete Sale' : 'Receive Items'} tab.
+                      To complete the sale, use the Complete Sale tab.
                     </div>
                   )}
                   <button className="btn btn-secondary" style={{ alignSelf: 'flex-start', color: 'var(--red)', borderColor: 'var(--red)' }}

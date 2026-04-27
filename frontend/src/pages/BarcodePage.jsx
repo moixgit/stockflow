@@ -37,7 +37,7 @@ export default function BarcodePage() {
     setLoadingBarcode(true);
     try {
       const res = await api.get(`/barcode/generate/${barcode}?type=${barcodeType}`, { responseType: 'blob' });
-      const url = URL.createObjectURL(res.data);
+      const url = URL.createObjectURL(res);
       setBarcodeImg(url);
     } catch {
       toast.error('Failed to generate barcode');
@@ -49,7 +49,7 @@ export default function BarcodePage() {
   const generateForProduct = async (productId) => {
     try {
       const res = await api.get(`/barcode/product/${productId}`, { responseType: 'blob' });
-      const url = URL.createObjectURL(res.data);
+      const url = URL.createObjectURL(res);
       setBarcodeImg(url);
       setActiveTab('generator');
     } catch {

@@ -110,11 +110,15 @@ router.patch('/:id/status', authorize('admin', 'inventory_manager'), async (req,
     if (locked.includes(po.status))
       return res.status(400).json({ success: false, message: `Cannot change status of a ${po.status} PO` });
 
-    const allowed = ['ordered', 'cancelled'];
+    const allowed = ['ordered', 'received', 'cancelled'];
     if (!allowed.includes(status))
       return res.status(400).json({ success: false, message: 'Invalid status transition' });
 
     po.status = status;
+    if (status === 'received') {
+      po.receivedDate = new Date();
+      po.items.forEach(item => { item.receivedQty = item.orderedQty; });
+    }
     await po.save();
     res.json({ success: true, data: await populatePO(PurchaseOrder.findById(po._id)) });
   } catch (err) { res.status(400).json({ success: false, message: err.message }); }
@@ -164,6 +168,25 @@ router.post('/:id/receive', authorize('admin', 'inventory_manager'), async (req,
     await Vendor.findByIdAndUpdate(po.vendor, { $inc: { balance: po.grandTotal } });
     res.json({ success: true, data: await populatePO(PurchaseOrder.findById(po._id)) });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// Record payment for a standard PO
+router.patch('/:id/payment', authorize('admin', 'inventory_manager'), async (req, res) => {
+  try {
+    const { amount } = req.body;
+    if (!amount || Number(amount) <= 0)
+      return res.status(400).json({ success: false, message: 'Amount must be greater than 0' });
+    const po = await PurchaseOrder.findById(req.params.id);
+    if (!po) return res.status(404).json({ success: false, message: 'PO not found' });
+    if (po.status === 'cancelled')
+      return res.status(400).json({ success: false, message: 'Cannot record payment for a cancelled PO' });
+
+    po.paidAmount = (po.paidAmount || 0) + Number(amount);
+    po.paymentStatus = po.paidAmount >= po.grandTotal ? 'paid' : (po.paidAmount > 0 ? 'partial' : 'unpaid');
+    await po.save();
+
+    res.json({ success: true, data: await populatePO(PurchaseOrder.findById(po._id)) });
+  } catch (err) { res.status(400).json({ success: false, message: err.message }); }
 });
 
 // Complete a direct-sale PO — creates a Sale record, no inventory touch
@@ -217,6 +240,8 @@ router.post('/:id/complete-direct-sale', authorize('admin', 'inventory_manager')
 
     po.status = 'direct_sale';
     po.linkedSaleId = sale._id;
+    po.paidAmount = paid;
+    po.paymentStatus = paid >= grandTotal ? 'paid' : (paid > 0 ? 'partial' : 'unpaid');
     if (customer) po.customer = customer;
     await po.save();
 

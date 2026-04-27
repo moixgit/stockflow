@@ -11,7 +11,7 @@ export default function ReportsPage() {
   const [inventoryData, setInventoryData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [dateFrom, setDateFrom] = useState(() => {
-    const d = new Date(); d.setDate(1);
+    const d = new Date(); d.setDate(d.getDate() - 30);
     return d.toISOString().split('T')[0];
   });
   const [dateTo, setDateTo] = useState(() => new Date().toISOString().split('T')[0]);
@@ -22,10 +22,16 @@ export default function ReportsPage() {
     if (activeTab === 'inventory') fetchInventory();
   }, [activeTab]);
 
-  const fetchSales = async () => {
+  const fetchSales = async (overrides = {}) => {
     setLoading(true);
+    const from = 'from' in overrides ? overrides.from : dateFrom;
+    const to = 'to' in overrides ? overrides.to : dateTo;
+    const gb = overrides.groupBy || groupBy;
+    const params = new URLSearchParams({ groupBy: gb });
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
     try {
-      const res = await api.get(`/reports/sales?from=${dateFrom}&to=${dateTo}&groupBy=${groupBy}`);
+      const res = await api.get(`/reports/sales?${params}`);
       setSalesData(res.data);
     } catch { toast.error('Failed to load sales report'); }
     finally { setLoading(false); }
@@ -109,6 +115,7 @@ export default function ReportsPage() {
                 </select>
               </div>
               <button type="submit" className="btn btn-primary" style={{ whiteSpace: 'nowrap' }}>Apply Filter</button>
+              <button type="button" className="btn btn-ghost" style={{ whiteSpace: 'nowrap' }} onClick={() => { setDateFrom(''); setDateTo(''); fetchSales({ from: '', to: '' }); }}>Show All</button>
               {salesData?.sales && (
                 <button type="button" className="btn btn-ghost" style={{ whiteSpace: 'nowrap' }}
                   onClick={() => exportCSV(salesData.sales, `sales-report-${dateFrom}-${dateTo}.csv`)}>
@@ -195,6 +202,15 @@ export default function ReportsPage() {
                       ))}
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* Empty state */}
+              {salesData.sales?.length === 0 && (
+                <div className="card" style={{ textAlign: 'center', padding: '60px', color: 'var(--text-muted)' }}>
+                  <div style={{ fontSize: '48px', marginBottom: '12px' }}>📭</div>
+                  <div style={{ fontWeight: 600, marginBottom: '6px', color: 'var(--text-primary)' }}>No sales found</div>
+                  <div>No sales match the selected date range. Try clicking <strong>Show All</strong> to see all sales.</div>
                 </div>
               )}
 
