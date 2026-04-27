@@ -27,8 +27,8 @@ router.post('/adjust', authorize('admin', 'inventory_manager'), async (req, res)
   try {
     const { productId, warehouseId, quantity, type = 'adjustment', notes, reference } = req.body;
 
-    const inv = await Inventory.findOne({ product: productId, warehouse: warehouseId });
-    if (!inv) return res.status(404).json({ success: false, message: 'Inventory record not found' });
+    let inv = await Inventory.findOne({ product: productId, warehouse: warehouseId });
+    if (!inv) inv = await Inventory.create({ product: productId, warehouse: warehouseId, quantity: 0, reservedQuantity: 0 });
 
     const prevQty = inv.quantity;
     if (type === 'adjustment') {

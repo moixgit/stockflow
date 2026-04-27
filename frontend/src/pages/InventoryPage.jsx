@@ -2,8 +2,79 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../utils/api.js';
 import toast from 'react-hot-toast';
-import { RefreshCw, ArrowLeftRight, AlertTriangle, Edit2 } from 'lucide-react';
+import { RefreshCw, ArrowLeftRight, AlertTriangle, Edit2, Plus } from 'lucide-react';
 import { useAuthStore } from '../store/authStore.js';
+
+function AddStockModal({ warehouses, onClose, onSave }) {
+  const [products, setProducts] = useState([]);
+  const [productId, setProductId] = useState('');
+  const [warehouseId, setWarehouseId] = useState(warehouses[0]?._id || '');
+  const [quantity, setQuantity] = useState(0);
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    api.get('/products?limit=500').then(res => setProducts(res.data || [])).catch(() => {});
+  }, []);
+
+  const filtered = products.filter(p =>
+    !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.sku?.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!productId) return toast.error('Select a product');
+    if (!warehouseId) return toast.error('Select a warehouse');
+    setSaving(true);
+    try {
+      await api.post('/inventory/adjust', { productId, warehouseId, quantity: +quantity, type: 'adjustment', notes });
+      toast.success('Stock set successfully');
+      onSave();
+    } catch (err) { toast.error(err?.message || 'Failed'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: 440 }}>
+        <div className="modal-header">
+          <h2 className="modal-title">Add / Set Stock</h2>
+          <button className="btn btn-ghost btn-icon" onClick={onClose}>✕</button>
+        </div>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="form-group">
+            <label className="form-label">Warehouse</label>
+            <select className="form-input" value={warehouseId} onChange={e => setWarehouseId(e.target.value)} required>
+              <option value="">Select warehouse</option>
+              {warehouses.map(w => <option key={w._id} value={w._id}>{w.name}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Product</label>
+            <input className="form-input" placeholder="Search product..." value={search} onChange={e => setSearch(e.target.value)} style={{ marginBottom: 6 }} />
+            <select className="form-input" value={productId} onChange={e => setProductId(e.target.value)} required size={5} style={{ height: 'auto' }}>
+              <option value="">— select —</option>
+              {filtered.map(p => <option key={p._id} value={p._id}>{p.name} ({p.sku})</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Quantity (sets exact stock)</label>
+            <input className="form-input" type="number" min="0" value={quantity} onChange={e => setQuantity(e.target.value)} required />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Notes</label>
+            <input className="form-input" value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Opening stock" />
+          </div>
+          <div className="modal-footer" style={{ margin: 0, padding: 0, border: 'none' }}>
+            <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+            <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? <span className="spinner" /> : 'Set Stock'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 function AdjustModal({ inv, onClose, onSave }) {
   const [type, setType] = useState('adjustment');
@@ -66,6 +137,7 @@ export default function InventoryPage() {
   const [loading, setLoading] = useState(true);
   const [warehouseFilter, setWarehouseFilter] = useState('');
   const [adjustItem, setAdjustItem] = useState(null);
+  const [addStockOpen, setAddStockOpen] = useState(false);
   const { isInventoryManager } = useAuthStore();
 
   const load = useCallback(async () => {
@@ -86,6 +158,11 @@ export default function InventoryPage() {
     <div>
       <div className="page-header">
         <div><h1 className="page-title">Inventory</h1><p className="page-subtitle">{inventory.length} stock records</p></div>
+        {isInventoryManager() && (
+          <button className="btn btn-primary" onClick={() => setAddStockOpen(true)}>
+            <Plus size={16} /> Add Stock Entry
+          </button>
+        )}
       </div>
 
       <div className="card mb-16">
@@ -144,6 +221,7 @@ export default function InventoryPage() {
       </div>
 
       {adjustItem && <AdjustModal inv={adjustItem} onClose={() => setAdjustItem(null)} onSave={() => { setAdjustItem(null); load(); }} />}
+      {addStockOpen && <AddStockModal warehouses={warehouses} onClose={() => setAddStockOpen(false)} onSave={() => { setAddStockOpen(false); load(); }} />}
     </div>
   );
 }

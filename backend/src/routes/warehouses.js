@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { Warehouse } from '../models/index.js';
+import { Warehouse, Product, Inventory } from '../models/index.js';
 import { protect, authorize } from '../middleware/auth.js';
 
 const router = Router();
@@ -17,6 +17,13 @@ router.post('/', authorize('admin'), async (req, res) => {
     const body = { ...req.body };
     if (!body.manager) delete body.manager;
     const wh = await Warehouse.create(body);
+
+    const products = await Product.find({ isActive: true }).select('_id');
+    if (products.length) {
+      const docs = products.map(p => ({ product: p._id, warehouse: wh._id, quantity: 0, reservedQuantity: 0 }));
+      await Inventory.insertMany(docs, { ordered: false }).catch(() => {});
+    }
+
     res.status(201).json({ success: true, data: wh });
   } catch (err) { res.status(400).json({ success: false, message: err.message }); }
 });
