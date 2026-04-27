@@ -346,6 +346,7 @@ export default function ProductsPage() {
                     <th>Price</th>
                     <th>Margin</th>
                     <th>Reorder Pt.</th>
+                    <th>Stock</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -384,6 +385,29 @@ export default function ProductsPage() {
                           </span>
                         </td>
                         <td><span className="text-mono">{p.reorderPoint}</span></td>
+                        <td onClick={e => e.stopPropagation()}>
+                          {(() => {
+                            const stock = p.stock || [];
+                            const total = stock.reduce((s, i) => s + i.quantity, 0);
+                            const withStock = stock.filter(s => s.quantity > 0);
+                            return (
+                              <div style={{ minWidth: 80 }}>
+                                <span className={`badge ${total === 0 ? 'badge-red' : total <= p.reorderPoint ? 'badge-yellow' : 'badge-green'}`}>
+                                  {total} {p.unit || 'pcs'}
+                                </span>
+                                {withStock.length > 0 && (
+                                  <div style={{ marginTop: 4 }}>
+                                    {withStock.map(s => (
+                                      <div key={s.warehouse._id} style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                                        {s.warehouse.name}: <span style={{ color: 'var(--text)', fontWeight: 500 }}>{s.quantity}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </td>
                         <td onClick={e => e.stopPropagation()}>
                           <div style={{ display: 'flex', gap: 4 }}>
                             <button className="btn btn-ghost btn-sm btn-icon" onClick={() => navigate(`/products/${p._id}`)} title="View details">

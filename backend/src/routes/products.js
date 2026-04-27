@@ -51,7 +51,23 @@ router.get('/', async (req, res) => {
       .skip((page - 1) * limit)
       .limit(Number(limit));
 
-    res.json({ success: true, data: products, total, page: Number(page), pages: Math.ceil(total / limit) });
+    const productIds = products.map(p => p._id);
+    const inventories = await Inventory.find({ product: { $in: productIds } })
+      .populate('warehouse', 'name code');
+
+    const invMap = {};
+    for (const inv of inventories) {
+      const pid = inv.product.toString();
+      if (!invMap[pid]) invMap[pid] = [];
+      invMap[pid].push({ warehouse: inv.warehouse, quantity: inv.quantity });
+    }
+
+    const productsWithStock = products.map(p => ({
+      ...p.toObject(),
+      stock: invMap[p._id.toString()] || [],
+    }));
+
+    res.json({ success: true, data: productsWithStock, total, page: Number(page), pages: Math.ceil(total / limit) });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 

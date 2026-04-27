@@ -412,6 +412,12 @@ export default function POSPage() {
       p.barcode?.includes(search),
   );
 
+  const getWarehouseStock = (product) => {
+    if (!selectedWarehouse || !product.stock) return null;
+    const inv = product.stock.find(s => s.warehouse?._id === selectedWarehouse);
+    return inv ? inv.quantity : 0;
+  };
+
   const addToCart = (product) => {
     setCart((prev) => {
       const existing = prev.find((i) => i.product._id === product._id);
@@ -738,6 +744,22 @@ export default function POSPage() {
                     >
                       {p.sku}
                     </div>
+                    {(() => {
+                      const stock = getWarehouseStock(p);
+                      if (stock === null) return null;
+                      const isOut = stock === 0;
+                      const isLow = !isOut && stock <= (p.reorderPoint || 10);
+                      return (
+                        <div style={{
+                          marginTop: 5,
+                          fontSize: 10,
+                          fontWeight: 600,
+                          color: isOut ? 'var(--red)' : isLow ? 'var(--yellow)' : 'var(--green)',
+                        }}>
+                          {isOut ? 'Out of stock' : `Stock: ${stock}`}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </button>
               ))}
