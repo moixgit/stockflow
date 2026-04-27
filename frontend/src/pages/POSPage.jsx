@@ -648,151 +648,172 @@ export default function POSPage() {
                 gap: 12,
               }}
             >
-              {filtered.map((p) => (
-                <button
-                  key={p._id}
-                  onClick={() => addToCart(p)}
-                  style={{
-                    background: "var(--bg-card)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 12,
-                    padding: 0,
-                    cursor: "pointer",
-                    transition:
-                      "border-color 0.15s, transform 0.15s, box-shadow 0.15s",
-                    textAlign: "left",
-                    overflow: "hidden",
-                    display: "flex",
-                    flexDirection: "column",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.borderColor = "var(--accent)";
-                    e.currentTarget.style.transform = "translateY(-3px)";
-                    e.currentTarget.style.boxShadow =
-                      "0 8px 24px rgba(108,99,255,0.2)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.borderColor = "var(--border)";
-                    e.currentTarget.style.transform = "none";
-                    e.currentTarget.style.boxShadow = "none";
-                  }}
-                >
-                  {/* Image area */}
-                  <div
+              {filtered.map((p) => {
+                const stock = getWarehouseStock(p);
+                const isOutOfStock = stock != null && stock === 0;
+                const isLowStock = stock != null && stock > 0 && stock <= (p.reorderPoint || 10);
+
+                return (
+                  <button
+                    key={p._id}
+                    onClick={() => {
+                      if (isOutOfStock) {
+                        toast.error(`"${p.name}" is out of stock in the selected warehouse`);
+                        return;
+                      }
+                      addToCart(p);
+                    }}
                     style={{
-                      width: "100%",
-                      height: 120,
-                      background: "var(--bg-elevated)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
+                      background: isOutOfStock ? "var(--bg-elevated)" : "var(--bg-card)",
+                      border: `1px solid ${isOutOfStock ? "var(--border)" : "var(--border)"}`,
+                      borderRadius: 12,
+                      padding: 0,
+                      cursor: isOutOfStock ? "not-allowed" : "pointer",
+                      transition: "border-color 0.15s, transform 0.15s, box-shadow 0.15s",
+                      textAlign: "left",
                       overflow: "hidden",
-                      flexShrink: 0,
+                      display: "flex",
+                      flexDirection: "column",
+                      opacity: isOutOfStock ? 0.5 : 1,
                       position: "relative",
                     }}
+                    onMouseEnter={(e) => {
+                      if (isOutOfStock) return;
+                      e.currentTarget.style.borderColor = "var(--accent)";
+                      e.currentTarget.style.transform = "translateY(-3px)";
+                      e.currentTarget.style.boxShadow = "0 8px 24px rgba(108,99,255,0.2)";
+                    }}
+                    onMouseLeave={(e) => {
+                      if (isOutOfStock) return;
+                      e.currentTarget.style.borderColor = "var(--border)";
+                      e.currentTarget.style.transform = "none";
+                      e.currentTarget.style.boxShadow = "none";
+                    }}
                   >
-                    {p.image ? (
-                      <img
-                        src={p.image}
-                        alt={p.name}
-                        style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
-                        }}
-                      />
-                    ) : (
-                      <div
-                        style={{
-                          width: "100%",
-                          height: "100%",
-                          background: `linear-gradient(135deg, var(--accent-dim) 0%, var(--bg-elevated) 100%)`,
+                    {/* Image area */}
+                    <div
+                      style={{
+                        width: "100%",
+                        height: 120,
+                        background: "var(--bg-elevated)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        overflow: "hidden",
+                        flexShrink: 0,
+                        position: "relative",
+                      }}
+                    >
+                      {p.image ? (
+                        <img
+                          src={p.image}
+                          alt={p.name}
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            objectFit: "cover",
+                            filter: isOutOfStock ? "grayscale(60%)" : "none",
+                          }}
+                        />
+                      ) : (
+                        <div
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            background: `linear-gradient(135deg, var(--accent-dim) 0%, var(--bg-elevated) 100%)`,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          <ShoppingCart size={28} color="var(--accent)" style={{ opacity: 0.5 }} />
+                        </div>
+                      )}
+
+                      {/* Out-of-stock overlay banner */}
+                      {isOutOfStock && (
+                        <div style={{
+                          position: "absolute",
+                          inset: 0,
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
-                        }}
-                      >
-                        <ShoppingCart
-                          size={28}
-                          color="var(--accent)"
-                          style={{ opacity: 0.5 }}
-                        />
-                      </div>
-                    )}
-                    {/* Price badge */}
-                    <div
-                      style={{
-                        position: "absolute",
-                        bottom: 6,
-                        right: 6,
-                        background: "var(--accent)",
-                        color: "#fff",
-                        borderRadius: 8,
-                        padding: "3px 8px",
-                        fontSize: 12,
-                        fontWeight: 700,
-                      }}
-                    >
-                      Rs {p.sellingPrice}
+                          background: "rgba(0,0,0,0.45)",
+                        }}>
+                          <div style={{
+                            background: "var(--red)",
+                            color: "#fff",
+                            fontSize: 10,
+                            fontWeight: 800,
+                            letterSpacing: "0.08em",
+                            textTransform: "uppercase",
+                            padding: "4px 10px",
+                            borderRadius: 6,
+                          }}>
+                            Out of Stock
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Price badge */}
+                      {!isOutOfStock && (
+                        <div
+                          style={{
+                            position: "absolute",
+                            bottom: 6,
+                            right: 6,
+                            background: "var(--accent)",
+                            color: "#fff",
+                            borderRadius: 8,
+                            padding: "3px 8px",
+                            fontSize: 12,
+                            fontWeight: 700,
+                          }}
+                        >
+                          Rs {p.sellingPrice}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                  {/* Info */}
-                  <div style={{ padding: "10px 12px 12px" }}>
-                    <div
-                      style={{
-                        fontWeight: 600,
-                        fontSize: 14,
-                        color: "var(--text)",
-                        lineHeight: 1.3,
-                        marginBottom: 4,
-                        overflow: "hidden",
-                        display: "-webkit-box",
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: "vertical",
-                      }}
-                    >
-                      {p.name}
-                    </div>
-                    {p.brand?.name && (
+
+                    {/* Info */}
+                    <div style={{ padding: "10px 12px 12px" }}>
                       <div
                         style={{
-                          fontSize: 11,
-                          color: "var(--accent)",
-                          fontWeight: 500,
-                          marginBottom: 2,
+                          fontWeight: 600,
+                          fontSize: 14,
+                          color: isOutOfStock ? "var(--text-muted)" : "var(--text)",
+                          lineHeight: 1.3,
+                          marginBottom: 4,
+                          overflow: "hidden",
+                          display: "-webkit-box",
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: "vertical",
                         }}
                       >
-                        {p.brand.name}
+                        {p.name}
                       </div>
-                    )}
-                    <div
-                      style={{
-                        fontSize: 11,
-                        color: "var(--text-muted)",
-                        fontFamily: "var(--font-mono)",
-                      }}
-                    >
-                      {p.sku}
-                    </div>
-                    {(() => {
-                      const stock = getWarehouseStock(p);
-                      if (stock == null) return null;
-                      const isOut = stock === 0;
-                      const isLow = !isOut && stock <= (p.reorderPoint || 10);
-                      return (
+                      {p.brand?.name && (
+                        <div style={{ fontSize: 11, color: "var(--accent)", fontWeight: 500, marginBottom: 2 }}>
+                          {p.brand.name}
+                        </div>
+                      )}
+                      <div style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
+                        {p.sku}
+                      </div>
+                      {stock != null && (
                         <div style={{
                           marginTop: 5,
                           fontSize: 10,
-                          fontWeight: 600,
-                          color: isOut ? 'var(--red)' : isLow ? 'var(--yellow)' : 'var(--green)',
+                          fontWeight: 700,
+                          color: isOutOfStock ? "var(--red)" : isLowStock ? "var(--yellow)" : "var(--green)",
                         }}>
-                          {isOut ? 'Out of stock' : `Stock: ${stock}`}
+                          {isOutOfStock ? "Out of stock" : isLowStock ? `Low stock: ${stock}` : `In stock: ${stock}`}
                         </div>
-                      );
-                    })()}
-                  </div>
-                </button>
-              ))}
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

@@ -38,12 +38,13 @@ router.post('/', async (req, res) => {
 
     // Validate inventory before creating anything
     for (const item of req.body.items) {
-      const inv = await Inventory.findOne({ product: item.product, warehouse: warehouseId });
+      // Sort descending to pick the record with highest quantity (handles any legacy duplicates)
+      const inv = await Inventory.findOne({ product: item.product, warehouse: warehouseId }).sort({ quantity: -1 });
       const product = await Product.findById(item.product).select('name');
       if (!inv || inv.quantity < item.quantity)
         return res.status(400).json({
           success: false,
-          message: `Insufficient stock for "${product?.name || item.product}" — available: ${inv?.quantity ?? 0}, requested: ${item.quantity}`,
+          message: `Insufficient stock for "${product?.name || item.product}" — available: ${inv?.quantity ?? 0}, requested: ${item.quantity}. Make sure you have stock in the selected warehouse.`,
         });
     }
 
@@ -74,7 +75,7 @@ router.post('/', async (req, res) => {
 
     // Deduct inventory
     for (const item of items) {
-      const inv = await Inventory.findOne({ product: item.product, warehouse: warehouseId });
+      const inv = await Inventory.findOne({ product: item.product, warehouse: warehouseId }).sort({ quantity: -1 });
       const prevQty = inv.quantity;
       inv.quantity -= item.quantity;
       await inv.save();

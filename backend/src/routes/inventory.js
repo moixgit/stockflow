@@ -27,17 +27,24 @@ router.post('/adjust', authorize('admin', 'inventory_manager'), async (req, res)
   try {
     const { productId, warehouseId, quantity, type = 'adjustment', notes, reference } = req.body;
 
+    // Use findOneAndUpdate with upsert to avoid race-condition duplicates
     let inv = await Inventory.findOne({ product: productId, warehouse: warehouseId });
-    if (!inv) inv = await Inventory.create({ product: productId, warehouse: warehouseId, quantity: 0, reservedQuantity: 0 });
+    if (!inv) {
+      inv = await Inventory.findOneAndUpdate(
+        { product: productId, warehouse: warehouseId },
+        { $setOnInsert: { product: productId, warehouse: warehouseId, quantity: 0, reservedQuantity: 0 } },
+        { upsert: true, new: true }
+      );
+    }
 
     const prevQty = inv.quantity;
     if (type === 'adjustment') {
-      inv.quantity = quantity;
+      inv.quantity = Number(quantity);
     } else if (type === 'in') {
-      inv.quantity += quantity;
+      inv.quantity += Number(quantity);
     } else if (type === 'out') {
       if (inv.quantity < quantity) return res.status(400).json({ success: false, message: 'Insufficient stock' });
-      inv.quantity -= quantity;
+      inv.quantity -= Number(quantity);
     }
     await inv.save();
 
