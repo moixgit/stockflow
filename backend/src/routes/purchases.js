@@ -117,7 +117,30 @@ router.patch('/:id/status', authorize('admin', 'inventory_manager'), async (req,
     po.status = status;
     if (status === 'received') {
       po.receivedDate = new Date();
-      po.items.forEach(item => { item.receivedQty = item.orderedQty; });
+
+      for (const item of po.items) {
+        const remaining = item.orderedQty - (item.receivedQty || 0);
+        if (remaining > 0) {
+          let inv = await Inventory.findOne({ product: item.product, warehouse: po.warehouse });
+          if (!inv) inv = await Inventory.create({ product: item.product, warehouse: po.warehouse, quantity: 0, reservedQuantity: 0 });
+          const prevQty = inv.quantity;
+          inv.quantity += remaining;
+          await inv.save();
+
+          await InventoryMovement.create({
+            product: item.product,
+            warehouse: po.warehouse,
+            type: 'in',
+            quantity: remaining,
+            previousQuantity: prevQty,
+            newQuantity: inv.quantity,
+            reference: po.poNumber,
+            referenceType: 'purchase',
+            performedBy: req.user._id,
+          });
+        }
+        item.receivedQty = item.orderedQty;
+      }
     }
     await po.save();
     res.json({ success: true, data: await populatePO(PurchaseOrder.findById(po._id)) });

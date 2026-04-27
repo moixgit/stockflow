@@ -36,11 +36,15 @@ router.post('/', async (req, res) => {
     const saleNumber = await generateSaleNumber();
     const warehouseId = req.body.warehouse;
 
-    // Validate & deduct inventory
+    // Validate inventory before creating anything
     for (const item of req.body.items) {
       const inv = await Inventory.findOne({ product: item.product, warehouse: warehouseId });
+      const product = await Product.findById(item.product).select('name');
       if (!inv || inv.quantity < item.quantity)
-        return res.status(400).json({ success: false, message: `Insufficient stock for product` });
+        return res.status(400).json({
+          success: false,
+          message: `Insufficient stock for "${product?.name || item.product}" — available: ${inv?.quantity ?? 0}, requested: ${item.quantity}`,
+        });
     }
 
     const items = await Promise.all(req.body.items.map(async item => {

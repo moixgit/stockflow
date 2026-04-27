@@ -1,34 +1,153 @@
 // InventoryPage.jsx
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../utils/api.js';
 import toast from 'react-hot-toast';
-import { RefreshCw, ArrowLeftRight, AlertTriangle, Edit2, Plus } from 'lucide-react';
+import { RefreshCw, AlertTriangle, Edit2, Plus, Search, X, Package, ChevronDown } from 'lucide-react';
 import { useAuthStore } from '../store/authStore.js';
+
+function ProductSearch({ products, value, onChange }) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef();
+  const inputRef = useRef();
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const filtered = products.filter(p => {
+    if (!query) return true;
+    const q = query.toLowerCase();
+    return p.name.toLowerCase().includes(q) || p.sku?.toLowerCase().includes(q) || p.brand?.name?.toLowerCase().includes(q);
+  }).slice(0, 40);
+
+  const select = (p) => {
+    onChange(p);
+    setQuery('');
+    setOpen(false);
+  };
+
+  const clear = (e) => {
+    e.stopPropagation();
+    onChange(null);
+    setQuery('');
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative' }}>
+      {value ? (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '8px 12px', borderRadius: 'var(--radius-sm)',
+          border: '1px solid var(--accent)', background: 'var(--bg-elevated)',
+          cursor: 'default',
+        }}>
+          <div style={{
+            width: 32, height: 32, borderRadius: 6, background: 'var(--accent)18',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          }}>
+            {value.image
+              ? <img src={value.image} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6 }} />
+              : <Package size={14} color="var(--accent)" />}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value.name}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+              {value.sku}{value.brand?.name ? ` · ${value.brand.name}` : ''}
+            </div>
+          </div>
+          <button type="button" onClick={clear} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2, display: 'flex' }}>
+            <X size={14} />
+          </button>
+        </div>
+      ) : (
+        <div style={{ position: 'relative' }}>
+          <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+          <input
+            ref={inputRef}
+            className="form-input"
+            style={{ paddingLeft: 32, paddingRight: 32 }}
+            placeholder="Search by name, SKU or brand..."
+            value={query}
+            onChange={e => { setQuery(e.target.value); setOpen(true); }}
+            onFocus={() => setOpen(true)}
+            autoComplete="off"
+          />
+          <ChevronDown size={14} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+        </div>
+      )}
+
+      {open && !value && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 9999,
+          background: 'var(--bg-card)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-sm)', boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+          maxHeight: 260, overflowY: 'auto',
+        }}>
+          {filtered.length === 0 ? (
+            <div style={{ padding: '20px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+              No products found
+            </div>
+          ) : filtered.map(p => (
+            <button
+              key={p._id}
+              type="button"
+              onClick={() => select(p)}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+                padding: '8px 12px', background: 'none', border: 'none',
+                borderBottom: '1px solid var(--border)', cursor: 'pointer', textAlign: 'left',
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-elevated)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'none'}
+            >
+              <div style={{
+                width: 30, height: 30, borderRadius: 6, background: 'var(--bg-elevated)',
+                border: '1px solid var(--border)', display: 'flex', alignItems: 'center',
+                justifyContent: 'center', flexShrink: 0, overflow: 'hidden',
+              }}>
+                {p.image
+                  ? <img src={p.image} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  : <Package size={13} color="var(--text-muted)" />}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                  {p.sku}{p.brand?.name ? ` · ${p.brand.name}` : ''}
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function AddStockModal({ warehouses, onClose, onSave }) {
   const [products, setProducts] = useState([]);
-  const [productId, setProductId] = useState('');
+  const [selectedProduct, setSelectedProduct] = useState(null);
   const [warehouseId, setWarehouseId] = useState(warehouses[0]?._id || '');
-  const [quantity, setQuantity] = useState(0);
+  const [quantity, setQuantity] = useState('');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
-  const [search, setSearch] = useState('');
 
   useEffect(() => {
     api.get('/products?limit=500').then(res => setProducts(res.data || [])).catch(() => {});
   }, []);
 
-  const filtered = products.filter(p =>
-    !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.sku?.toLowerCase().includes(search.toLowerCase())
-  );
-
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!productId) return toast.error('Select a product');
+    if (!selectedProduct) return toast.error('Select a product');
     if (!warehouseId) return toast.error('Select a warehouse');
     setSaving(true);
     try {
-      await api.post('/inventory/adjust', { productId, warehouseId, quantity: +quantity, type: 'adjustment', notes });
+      await api.post('/inventory/adjust', { productId: selectedProduct._id, warehouseId, quantity: +quantity, type: 'adjustment', notes });
       toast.success('Stock set successfully');
       onSave();
     } catch (err) { toast.error(err?.message || 'Failed'); }
@@ -37,12 +156,12 @@ function AddStockModal({ warehouses, onClose, onSave }) {
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ maxWidth: 440 }}>
+      <div className="modal" style={{ maxWidth: 460 }}>
         <div className="modal-header">
           <h2 className="modal-title">Add / Set Stock</h2>
           <button className="btn btn-ghost btn-icon" onClick={onClose}>✕</button>
         </div>
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div className="form-group">
             <label className="form-label">Warehouse</label>
             <select className="form-input" value={warehouseId} onChange={e => setWarehouseId(e.target.value)} required>
@@ -50,25 +169,36 @@ function AddStockModal({ warehouses, onClose, onSave }) {
               {warehouses.map(w => <option key={w._id} value={w._id}>{w.name}</option>)}
             </select>
           </div>
+
           <div className="form-group">
             <label className="form-label">Product</label>
-            <input className="form-input" placeholder="Search product..." value={search} onChange={e => setSearch(e.target.value)} style={{ marginBottom: 6 }} />
-            <select className="form-input" value={productId} onChange={e => setProductId(e.target.value)} required size={5} style={{ height: 'auto' }}>
-              <option value="">— select —</option>
-              {filtered.map(p => <option key={p._id} value={p._id}>{p.name} ({p.sku})</option>)}
-            </select>
+            <ProductSearch products={products} value={selectedProduct} onChange={setSelectedProduct} />
           </div>
+
           <div className="form-group">
-            <label className="form-label">Quantity (sets exact stock)</label>
-            <input className="form-input" type="number" min="0" value={quantity} onChange={e => setQuantity(e.target.value)} required />
+            <label className="form-label">Quantity</label>
+            <input
+              className="form-input"
+              type="number"
+              min="0"
+              placeholder="Enter quantity..."
+              value={quantity}
+              onChange={e => setQuantity(e.target.value)}
+              required
+            />
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>This sets the exact stock count for the selected warehouse.</div>
           </div>
+
           <div className="form-group">
-            <label className="form-label">Notes</label>
-            <input className="form-input" value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Opening stock" />
+            <label className="form-label">Notes <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}>(optional)</span></label>
+            <input className="form-input" value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Opening stock, physical count..." />
           </div>
+
           <div className="modal-footer" style={{ margin: 0, padding: 0, border: 'none' }}>
             <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? <span className="spinner" /> : 'Set Stock'}</button>
+            <button type="submit" className="btn btn-primary" disabled={saving}>
+              {saving ? <span className="spinner" /> : 'Set Stock'}
+            </button>
           </div>
         </form>
       </div>
