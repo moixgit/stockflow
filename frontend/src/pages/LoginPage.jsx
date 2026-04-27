@@ -67,40 +67,11 @@ export default function LoginPage() {
       </div>
 
       <div style={{ width: "100%", maxWidth: 420, position: "relative" }}>
+        <img style={{ width: "100%" }} src="./logo-light.png" />
         {/* Logo */}
-        <div style={{ textAlign: "center", marginBottom: 40 }}>
-          <div
-            style={{
-              width: 60,
-              height: 60,
-              background: "var(--accent)",
-              borderRadius: 16,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              margin: "0 auto 16px",
-            }}
-          >
-            <Boxes size={30} color="#fff" />
-          </div>
-          <h1
-            style={{
-              fontFamily: "var(--font-display)",
-              fontSize: 28,
-              fontWeight: 800,
-              color: "var(--text)",
-              letterSpacing: "-0.02em",
-            }}
-          >
-            StockFlow
-          </h1>
-          <p style={{ color: "var(--text-muted)", fontSize: 14, marginTop: 4 }}>
-            Inventory Management System
-          </p>
-        </div>
 
         {/* Card */}
-        <div className="card" style={{ padding: 32 }}>
+        <div className="card" style={{ padding: 32, marginTop: "10px" }}>
           <h2
             style={{
               fontFamily: "var(--font-display)",
