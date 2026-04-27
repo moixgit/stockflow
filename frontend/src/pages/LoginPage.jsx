@@ -67,11 +67,18 @@ export default function LoginPage() {
       </div>
 
       <div style={{ width: "100%", maxWidth: 420, position: "relative" }}>
-        <img style={{ width: "100%" }} src="./logo-light.png" />
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+          }}
+        >
+          <img style={{ width: "70%" }} src="./logo-light.png" />
+        </div>
         {/* Logo */}
 
         {/* Card */}
-        <div className="card" style={{ padding: 32, marginTop: "10px" }}>
+        <div className="card" style={{ padding: 32, marginTop: "20px" }}>
           <h2
             style={{
               fontFamily: "var(--font-display)",
