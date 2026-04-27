@@ -5,7 +5,7 @@ import toast from "react-hot-toast";
 import { Boxes, Eye, EyeOff } from "lucide-react";
 
 export default function LoginPage() {
-  const [form, setForm] = useState();
+  const [form, setForm] = useState({ email: "", password: "" });
   const [showPass, setShowPass] = useState(false);
   const { login, loading } = useAuthStore();
   const navigate = useNavigate();
