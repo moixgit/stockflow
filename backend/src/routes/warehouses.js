@@ -14,14 +14,18 @@ router.get('/', async (req, res) => {
 
 router.post('/', authorize('admin'), async (req, res) => {
   try {
-    const wh = await Warehouse.create(req.body);
+    const body = { ...req.body };
+    if (!body.manager) delete body.manager;
+    const wh = await Warehouse.create(body);
     res.status(201).json({ success: true, data: wh });
   } catch (err) { res.status(400).json({ success: false, message: err.message }); }
 });
 
 router.put('/:id', authorize('admin'), async (req, res) => {
   try {
-    const wh = await Warehouse.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const body = { ...req.body };
+    if (!body.manager) body.manager = null;
+    const wh = await Warehouse.findByIdAndUpdate(req.params.id, body, { new: true });
     res.json({ success: true, data: wh });
   } catch (err) { res.status(400).json({ success: false, message: err.message }); }
 });
