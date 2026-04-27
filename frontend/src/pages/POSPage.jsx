@@ -13,6 +13,7 @@ import {
   QrCode,
   Check,
   Printer,
+  RefreshCw,
 } from "lucide-react";
 
 const fmt = (n, currency = 'Rs') => `${currency} ${(n || 0).toFixed(2)}`;
@@ -387,22 +388,43 @@ export default function POSPage() {
   const [receipt, setReceipt] = useState(null);
   const [barcodeInput, setBarcodeInput] = useState("");
   const [storeSettings, setStoreSettings] = useState({});
+  const [loadingProducts, setLoadingProducts] = useState(false);
   const barcodeRef = useRef();
+  const selectedWarehouseRef = useRef("");
+
+  const loadProducts = useCallback(async () => {
+    setLoadingProducts(true);
+    try {
+      const p = await api.get("/products?limit=500");
+      setProducts(p.data);
+    } finally {
+      setLoadingProducts(false);
+    }
+  }, []);
 
   useEffect(() => {
     const load = async () => {
       const [p, w, s] = await Promise.all([
-        api.get("/products?limit=200"),
+        api.get("/products?limit=500"),
         api.get("/warehouses"),
         api.get("/settings"),
       ]);
       setProducts(p.data);
       setWarehouses(w.data);
-      if (w.data.length) setSelectedWarehouse(w.data[0]._id);
+      if (w.data.length) {
+        setSelectedWarehouse(w.data[0]._id);
+        selectedWarehouseRef.current = w.data[0]._id;
+      }
       setStoreSettings(s.data || {});
     };
     load();
-  }, []);
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") loadProducts();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [loadProducts]);
 
   const filtered = products.filter(
     (p) =>
@@ -414,8 +436,8 @@ export default function POSPage() {
 
   const getWarehouseStock = (product) => {
     if (!selectedWarehouse || !product.stock) return null;
-    const inv = product.stock.find(s => s.warehouse?._id === selectedWarehouse);
-    return inv ? inv.quantity : 0;
+    const inv = product.stock.find(s => String(s.warehouse?._id) === String(selectedWarehouse));
+    return inv != null ? inv.quantity : null;
   };
 
   const addToCart = (product) => {
@@ -558,6 +580,14 @@ export default function POSPage() {
                 </option>
               ))}
             </select>
+            <button
+              className="btn btn-secondary btn-icon"
+              onClick={loadProducts}
+              disabled={loadingProducts}
+              title="Refresh products & stock"
+            >
+              <RefreshCw size={15} style={loadingProducts ? { animation: "spin 1s linear infinite" } : {}} />
+            </button>
             <div className="search-bar" style={{ flex: 1 }}>
               <Search size={16} />
               <input
@@ -746,7 +776,7 @@ export default function POSPage() {
                     </div>
                     {(() => {
                       const stock = getWarehouseStock(p);
-                      if (stock === null) return null;
+                      if (stock == null) return null;
                       const isOut = stock === 0;
                       const isLow = !isOut && stock <= (p.reorderPoint || 10);
                       return (
