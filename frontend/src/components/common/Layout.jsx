@@ -22,7 +22,10 @@ import {
   Boxes,
   Sparkles,
   Settings,
+  Sun,
+  Moon,
 } from "lucide-react";
+import { useThemeStore } from "../../store/themeStore.js";
 
 const navItems = [
   {
@@ -128,6 +131,7 @@ const sections = [
 
 export default function Layout() {
   const { user, logout } = useAuthStore();
+  const { theme, toggleTheme } = useThemeStore();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
@@ -247,6 +251,12 @@ export default function Layout() {
                 />
                 System Online
               </div>
+
+              {/* Theme toggle */}
+              <button className="theme-toggle" onClick={toggleTheme} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
+                {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+              </button>
+
               <div
                 style={{
                   width: 32,
