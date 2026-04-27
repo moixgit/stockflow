@@ -646,7 +646,7 @@ export default function POSPage() {
                     style={{
                       width: "100%",
                       height: 120,
-                      background: "var(--bg-tertiary)",
+                      background: "var(--bg-elevated)",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
@@ -670,7 +670,7 @@ export default function POSPage() {
                         style={{
                           width: "100%",
                           height: "100%",
-                          background: `linear-gradient(135deg, var(--accent)18 0%, var(--bg-tertiary) 100%)`,
+                          background: `linear-gradient(135deg, var(--accent-dim) 0%, var(--bg-elevated) 100%)`,
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
@@ -705,8 +705,8 @@ export default function POSPage() {
                     <div
                       style={{
                         fontWeight: 600,
-                        fontSize: 18,
-                        color: "#fff",
+                        fontSize: 14,
+                        color: "var(--text)",
                         lineHeight: 1.3,
                         marginBottom: 4,
                         overflow: "hidden",

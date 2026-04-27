@@ -43,6 +43,7 @@
   --blue-dim: rgba(37, 99, 235, 0.12);
   --orange: #ea580c;
   --orange-dim: rgba(234, 88, 12, 0.12);
+  --bg-tertiary: #e8eaf4;
   --text: #1a1b2e;
   --text-muted: #5f6480;
   --text-dim: #9ca3af;
@@ -81,6 +82,7 @@ html.dark {
   --blue-dim: rgba(56, 189, 248, 0.12);
   --orange: #fb923c;
   --orange-dim: rgba(251, 146, 60, 0.12);
+  --bg-tertiary: #1f2230;
   --text: #e8eaf0;
   --text-muted: #8b8fa8;
   --text-dim: #5a5e75;
