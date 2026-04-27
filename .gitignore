@@ -1,0 +1,44 @@
+# --- Docker Specifics ---
+# Ignore local environment files that contain secrets
+.env
+.env.local
+.env.*.local
+
+# Ignore docker-compose override files used for local dev only
+docker-compose.override.yml
+
+# Ignore temporary docker build files (if any)
+.docker-build/
+
+# --- Language/Runtime Specifics ---
+# Node.js (Remove if not using Node)
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# Python (Remove if not using Python)
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+
+# --- Build & Logs ---
+# Build directories
+dist/
+build/
+out/
+
+# Log files
+*.log
+logs/
+
+# --- OS & IDE Specifics ---
+# macOS
+.DS_Store
+
+# IDEs (VS Code, JetBrains, etc.)
+.vscode/
+.idea/
+*.swp
+
