@@ -150,7 +150,7 @@ export default function Layout() {
       <aside className="sidebar">
         <div className="nav-logo">
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <img style={{ width: "220px" }} src="./logo-light.png" />
+            <img style={{ width: "220px" }} src={theme === 'dark' ? '/logo-light.png' : '/logo.png'} alt="StockFlow" />
           </div>
         </div>
 
