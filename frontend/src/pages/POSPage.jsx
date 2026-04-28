@@ -389,6 +389,7 @@ export default function POSPage() {
   const [barcodeInput, setBarcodeInput] = useState("");
   const [storeSettings, setStoreSettings] = useState({});
   const [loadingProducts, setLoadingProducts] = useState(false);
+  const [stockFilter, setStockFilter] = useState("in_stock");
   const barcodeRef = useRef();
   const selectedWarehouseRef = useRef("");
 
@@ -426,19 +427,49 @@ export default function POSPage() {
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [loadProducts]);
 
-  const filtered = products.filter(
-    (p) =>
-      !search ||
-      p.name.toLowerCase().includes(search.toLowerCase()) ||
-      p.sku?.toLowerCase().includes(search.toLowerCase()) ||
-      p.barcode?.includes(search),
-  );
-
   const getWarehouseStock = (product) => {
     if (!selectedWarehouse || !product.stock) return null;
     const inv = product.stock.find(s => String(s.warehouse?._id) === String(selectedWarehouse));
     return inv != null ? inv.quantity : null;
   };
+
+  const getStockStatus = (product) => {
+    const stock = getWarehouseStock(product);
+    if (stock === null) return "no_record";
+    if (stock === 0) return "out";
+    if (stock <= (product.reorderPoint || 10)) return "low";
+    return "in";
+  };
+
+  const stockOrder = { in: 0, low: 1, out: 2, no_record: 3 };
+
+  const searchMatches = (p) =>
+    !search ||
+    p.name.toLowerCase().includes(search.toLowerCase()) ||
+    p.sku?.toLowerCase().includes(search.toLowerCase()) ||
+    p.barcode?.includes(search);
+
+  const stockFilterMatches = (p) => {
+    if (stockFilter === "all") return true;
+    const status = getStockStatus(p);
+    if (stockFilter === "in_stock") return status === "in" || status === "low";
+    if (stockFilter === "low_stock") return status === "low";
+    if (stockFilter === "out_of_stock") return status === "out" || status === "no_record";
+    return true;
+  };
+
+  const filtered = products
+    .filter(p => searchMatches(p) && stockFilterMatches(p))
+    .sort((a, b) => stockOrder[getStockStatus(a)] - stockOrder[getStockStatus(b)]);
+
+  const stockCounts = products.reduce((acc, p) => {
+    if (!searchMatches(p)) return acc;
+    const s = getStockStatus(p);
+    if (s === "in") acc.in++;
+    else if (s === "low") acc.low++;
+    else if (s === "out" || s === "no_record") acc.out++;
+    return acc;
+  }, { in: 0, low: 0, out: 0 });
 
   const addToCart = (product) => {
     setCart((prev) => {
@@ -561,23 +592,21 @@ export default function POSPage() {
         {/* POS Header */}
         <div
           style={{
-            padding: "16px 20px",
             borderBottom: "1px solid var(--border)",
             background: "var(--bg-card)",
           }}
         >
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          {/* Row 1: controls */}
+          <div style={{ padding: "12px 16px", display: "flex", gap: 10, flexWrap: "wrap" }}>
             <select
               className="form-input"
-              style={{ width: 180 }}
+              style={{ width: 170 }}
               value={selectedWarehouse}
               onChange={(e) => setSelectedWarehouse(e.target.value)}
             >
               <option value="">Select Warehouse</option>
               {warehouses.map((w) => (
-                <option key={w._id} value={w._id}>
-                  {w.name}
-                </option>
+                <option key={w._id} value={w._id}>{w.name}</option>
               ))}
             </select>
             <button
@@ -588,7 +617,7 @@ export default function POSPage() {
             >
               <RefreshCw size={15} style={loadingProducts ? { animation: "spin 1s linear infinite" } : {}} />
             </button>
-            <div className="search-bar" style={{ flex: 1 }}>
+            <div className="search-bar" style={{ flex: 1, minWidth: 140 }}>
               <Search size={16} />
               <input
                 className="form-input"
@@ -601,23 +630,57 @@ export default function POSPage() {
               <input
                 ref={barcodeRef}
                 className="form-input"
-                style={{ paddingLeft: 36, width: 200 }}
+                style={{ paddingLeft: 34, width: 180 }}
                 placeholder="Scan barcode..."
                 value={barcodeInput}
                 onChange={(e) => setBarcodeInput(e.target.value)}
                 onKeyDown={handleBarcodeSearch}
               />
-              <QrCode
-                size={16}
-                style={{
-                  position: "absolute",
-                  left: 10,
-                  top: "50%",
-                  transform: "translateY(-50%)",
-                  color: "var(--text-dim)",
-                }}
-              />
+              <QrCode size={15} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-dim)" }} />
             </div>
+          </div>
+
+          {/* Row 2: stock filter chips + counts */}
+          <div style={{ padding: "0 16px 12px", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            {[
+              { id: "in_stock",      label: "In Stock",      count: stockCounts.in,  color: "var(--green)" },
+              { id: "low_stock",     label: "Low Stock",     count: stockCounts.low, color: "var(--yellow)" },
+              { id: "out_of_stock",  label: "Out of Stock",  count: stockCounts.out, color: "var(--red)" },
+              { id: "all",           label: "All",           count: stockCounts.in + stockCounts.low + stockCounts.out, color: "var(--text-muted)" },
+            ].map(f => (
+              <button
+                key={f.id}
+                onClick={() => setStockFilter(f.id)}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 5,
+                  padding: "4px 10px",
+                  borderRadius: 20,
+                  border: `1px solid ${stockFilter === f.id ? f.color : "var(--border)"}`,
+                  background: stockFilter === f.id ? `${f.color}18` : "transparent",
+                  color: stockFilter === f.id ? f.color : "var(--text-muted)",
+                  fontSize: 12,
+                  fontWeight: stockFilter === f.id ? 700 : 400,
+                  cursor: "pointer",
+                  transition: "all 0.15s",
+                }}
+              >
+                {f.label}
+                <span style={{
+                  background: stockFilter === f.id ? f.color : "var(--bg-elevated)",
+                  color: stockFilter === f.id ? "#fff" : "var(--text-muted)",
+                  borderRadius: 99,
+                  padding: "0px 6px",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  minWidth: 18,
+                  textAlign: "center",
+                }}>
+                  {f.count}
+                </span>
+              </button>
+            ))}
           </div>
         </div>
 
@@ -650,15 +713,21 @@ export default function POSPage() {
             >
               {filtered.map((p) => {
                 const stock = getWarehouseStock(p);
-                const isOutOfStock = stock != null && stock === 0;
-                const isLowStock = stock != null && stock > 0 && stock <= (p.reorderPoint || 10);
+                const status = getStockStatus(p);
+                const isOutOfStock = status === "out" || status === "no_record";
+                const isLowStock = status === "low";
 
                 return (
                   <button
                     key={p._id}
                     onClick={() => {
                       if (isOutOfStock) {
-                        toast.error(`"${p.name}" is out of stock in the selected warehouse`);
+                        toast.error(
+                          status === "no_record"
+                            ? `"${p.name}" has no stock record for this warehouse`
+                            : `"${p.name}" is out of stock in this warehouse`,
+                          { duration: 3000 }
+                        );
                         return;
                       }
                       addToCart(p);
@@ -800,14 +869,18 @@ export default function POSPage() {
                       <div style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
                         {p.sku}
                       </div>
-                      {stock != null && (
+                      {selectedWarehouse && (
                         <div style={{
                           marginTop: 5,
                           fontSize: 10,
                           fontWeight: 700,
                           color: isOutOfStock ? "var(--red)" : isLowStock ? "var(--yellow)" : "var(--green)",
                         }}>
-                          {isOutOfStock ? "Out of stock" : isLowStock ? `Low stock: ${stock}` : `In stock: ${stock}`}
+                          {isOutOfStock
+                            ? (status === "no_record" ? "Not stocked here" : "Out of stock")
+                            : isLowStock
+                            ? `⚠ Low stock: ${stock}`
+                            : `✓ In stock: ${stock}`}
                         </div>
                       )}
                     </div>
