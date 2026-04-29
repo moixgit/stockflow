@@ -21,6 +21,7 @@ import BreakagePage from './pages/BreakagePage.jsx';
 import InspectionPage from './pages/InspectionPage.jsx';
 import SalesPage from './pages/SalesPage.jsx';
 import VendorDetailPage from './pages/VendorDetailPage.jsx';
+import PurchaseDetailPage from './pages/PurchaseDetailPage.jsx';
 
 function PrivateRoute({ children, roles }) {
   const { user } = useAuthStore();
@@ -43,6 +44,7 @@ export default function App() {
           <Route path="pos" element={<POSPage />} />
           <Route path="sales" element={<SalesPage />} />
           <Route path="purchases" element={<PrivateRoute roles={['admin','inventory_manager']}><PurchasesPage /></PrivateRoute>} />
+          <Route path="purchases/:id" element={<PrivateRoute roles={['admin','inventory_manager']}><PurchaseDetailPage /></PrivateRoute>} />
           <Route path="inventory" element={<InventoryPage />} />
           <Route path="breakages" element={<PrivateRoute roles={['admin','inventory_manager']}><BreakagePage /></PrivateRoute>} />
           <Route path="inspections" element={<PrivateRoute roles={['admin','inventory_manager']}><InspectionPage /></PrivateRoute>} />
