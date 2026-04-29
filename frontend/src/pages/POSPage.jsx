@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import api from "../utils/api.js";
 import toast from "react-hot-toast";
 import { calcPricePerPiece, dimensionDisplay } from "../utils/pricing.js";
@@ -15,6 +15,7 @@ import {
   Check,
   Printer,
   RefreshCw,
+  Layers,
 } from "lucide-react";
 
 const fmt = (n, currency = 'Rs') => `${currency} ${(n || 0).toFixed(2)}`;
@@ -95,6 +96,7 @@ ${sale.items.map(item => `
 <div class="row"><span class="muted">Subtotal</span><span>${fmt(sale.subtotal, store.currency)}</span></div>
 ${sale.taxAmount > 0 ? `<div class="row"><span class="muted">Tax</span><span>${fmt(sale.taxAmount, store.currency)}</span></div>` : ''}
 ${sale.discountAmount > 0 ? `<div class="row"><span class="muted">Discount</span><span>-${fmt(sale.discountAmount, store.currency)}</span></div>` : ''}
+${sale.shippingCost > 0 ? `<div class="row"><span class="muted">Shipping</span><span>+${fmt(sale.shippingCost, store.currency)}</span></div>` : ''}
 <hr class="sep"/>
 <div class="total-row"><span>TOTAL</span><span>${fmt(sale.grandTotal, store.currency)}</span></div>
 <div class="row"><span class="muted">Paid (${sale.paymentMethod})</span><span>${fmt(sale.amountPaid, store.currency)}</span></div>
@@ -259,6 +261,7 @@ function printFullPage(sale, store = {}) {
       </div>
       ${sale.taxAmount > 0 ? `<div class="totals-row"><span class="label">Tax</span><span>${fmt(sale.taxAmount, store.currency)}</span></div>` : ''}
       ${sale.discountAmount > 0 ? `<div class="totals-row"><span class="label">Discount</span><span>-${fmt(sale.discountAmount, store.currency)}</span></div>` : ''}
+      ${sale.shippingCost > 0 ? `<div class="totals-row"><span class="label">Shipping</span><span>+${fmt(sale.shippingCost, store.currency)}</span></div>` : ''}
       <div class="totals-row grand">
         <span>Grand Total</span>
         <span>${fmt(sale.grandTotal, store.currency)}</span>
@@ -339,6 +342,12 @@ function ReceiptModal({ sale, store = {}, onClose }) {
               <span style={{ color: 'var(--red)' }}>-{fmt(sale.discountAmount)}</span>
             </div>
           )}
+          {sale.shippingCost > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+              <span style={{ color: 'var(--text-muted)' }}>Shipping</span>
+              <span>+{fmt(sale.shippingCost)}</span>
+            </div>
+          )}
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 17, fontWeight: 800, marginTop: 4, padding: '8px 0', borderTop: '2px solid var(--border)' }}>
             <span>Total</span>
             <span style={{ color: 'var(--green)' }}>{fmt(sale.grandTotal)}</span>
@@ -374,6 +383,69 @@ function ReceiptModal({ sale, store = {}, onClose }) {
   );
 }
 
+function BreakSetPromptModal({ product, availableSets, warehouseId, onClose, onBreakDone }) {
+  const [saving, setSaving] = useState(false);
+  const setOption = availableSets[0];
+
+  const handleBreak = async () => {
+    setSaving(true);
+    try {
+      await api.post('/inventory/break-set', {
+        setProductId: setOption.setProduct._id,
+        warehouseId,
+        setCount: 1,
+        notes: `Broken from POS to sell ${product.name}`,
+      });
+      toast.success(`Set broken — ${product.name} is now available`);
+      onBreakDone();
+    } catch (err) { toast.error(err?.message || 'Failed to break set'); }
+    finally { setSaving(false); }
+  };
+
+  const components = setOption.setProduct.setComponents || [];
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: 420 }}>
+        <div className="modal-header">
+          <h2 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Layers size={18} color="#8b5cf6" /> Break Set to Sell
+          </h2>
+          <button className="btn btn-ghost btn-icon" onClick={onClose}>✕</button>
+        </div>
+
+        <div style={{ marginBottom: 16, padding: 12, background: '#8b5cf608', borderRadius: 8, border: '1px solid #8b5cf630' }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>
+            "{product.name}" has no direct stock
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            Found in set: <strong style={{ color: '#8b5cf6' }}>{setOption.setProduct.name}</strong> — {setOption.setProduct._warehouseQty} set{setOption.setProduct._warehouseQty !== 1 ? 's' : ''} available
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', marginBottom: 8 }}>Breaking 1 set will release:</div>
+          {components.map((comp, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'var(--bg-elevated)', borderRadius: 7, marginBottom: 4, border: `1px solid ${(comp.product?._id || comp.product) === product._id ? '#8b5cf630' : 'var(--border)'}` }}>
+              <span style={{ fontSize: 13, fontWeight: (comp.product?._id || comp.product) === product._id ? 700 : 400, color: (comp.product?._id || comp.product) === product._id ? '#8b5cf6' : 'var(--text)' }}>
+                {comp.product?.name || 'Unknown'}
+              </span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--green)' }}>+{comp.quantity || 1}</span>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button className="btn btn-secondary" onClick={onClose} style={{ flex: 1 }}>Cancel</button>
+          <button className="btn btn-primary" onClick={handleBreak} disabled={saving}
+            style={{ flex: 2, background: '#8b5cf6', borderColor: '#8b5cf6' }}>
+            {saving ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Breaking…</> : `Break Set & Add to Cart`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 export default function POSPage() {
   const [products, setProducts] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
@@ -391,6 +463,8 @@ export default function POSPage() {
   const [storeSettings, setStoreSettings] = useState({});
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [stockFilter, setStockFilter] = useState("in_stock");
+  const [shippingCost, setShippingCost] = useState(0);
+  const [breakSetPrompt, setBreakSetPrompt] = useState(null);
   const barcodeRef = useRef();
   const selectedWarehouseRef = useRef("");
 
@@ -427,6 +501,23 @@ export default function POSPage() {
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [loadProducts]);
+
+  // map: componentProductId → [{ setProduct, qty }] for sets that have stock in selectedWarehouse
+  const componentToSets = useMemo(() => {
+    const map = {};
+    products.forEach(p => {
+      if (p.productType !== 'set' || !p.setComponents?.length) return;
+      const inv = p.stock?.find(s => String(s.warehouse?._id) === String(selectedWarehouse));
+      const qty = inv?.quantity || 0;
+      if (qty <= 0) return;
+      p.setComponents.forEach(comp => {
+        const cid = String(comp.product?._id || comp.product);
+        if (!map[cid]) map[cid] = [];
+        map[cid].push({ setProduct: { ...p, _warehouseQty: qty }, qty: comp.quantity || 1 });
+      });
+    });
+    return map;
+  }, [products, selectedWarehouse]);
 
   const getWarehouseInventory = (product) => {
     if (!selectedWarehouse || !product.stock) return null;
@@ -519,7 +610,7 @@ export default function POSPage() {
   const itemDiscountSaving = cart.reduce((s, i) => s + i.unitPrice * i.quantity * (i.discount / 100), 0);
   const subtotal = itemsSubtotal - itemDiscountSaving;
   const orderDiscountAmt = discountType === "pct" ? subtotal * (discount / 100) : discount;
-  const grandTotal = Math.max(0, subtotal - orderDiscountAmt);
+  const grandTotal = Math.max(0, subtotal - orderDiscountAmt + (shippingCost || 0));
   const change = Math.max(0, (parseFloat(amountPaid) || 0) - grandTotal);
 
   const handleBarcodeSearch = async (e) => {
@@ -562,11 +653,13 @@ export default function POSPage() {
         paymentMethod,
         amountPaid: parseFloat(amountPaid) || grandTotal,
         discountAmount: orderDiscountAmt,
+        shippingCost: shippingCost || 0,
       });
       setReceipt(res.data);
       setCart([]);
       setDiscount(0);
       setDiscountType("flat");
+      setShippingCost(0);
       setAmountPaid("");
       setCustomer({ name: "", phone: "", email: "" });
       toast.success(`Sale ${res.data.saleNumber} completed!`);
@@ -724,10 +817,13 @@ export default function POSPage() {
                 const loose = getLoosePieces(p);
                 const status = getStockStatus(p);
                 const isBox = p.productType === 'box';
+                const isSet = p.productType === 'set';
                 const canSellLoose = isBox && p.canSellLoose;
                 const piecesPerBox = p.piecesPerBox || 1;
                 const isOutOfStock = status === "out" || status === "no_record";
                 const isLowStock = status === "low";
+                const availableSets = isOutOfStock ? (componentToSets[p._id] || []) : [];
+                const canBreakFromSet = availableSets.length > 0;
                 const effectiveSellPrice = Math.round(calcPricePerPiece(p, p.sellingPrice) * 100) / 100;
                 const looseBasePrice = isBox ? p.sellingPrice / piecesPerBox : p.sellingPrice;
                 const loosePricePerPc = Math.round(calcPricePerPiece(p, looseBasePrice) * 100) / 100;
@@ -755,6 +851,7 @@ export default function POSPage() {
                     <div
                       onClick={() => {
                         if (isOutOfStock) {
+                          if (canBreakFromSet) { setBreakSetPrompt({ product: p, availableSets }); return; }
                           toast.error(status === "no_record" ? `"${p.name}" has no stock record for this warehouse` : `"${p.name}" is out of stock`, { duration: 3000 });
                           return;
                         }
@@ -801,26 +898,16 @@ export default function POSPage() {
 
                       {/* Out-of-stock overlay banner */}
                       {isOutOfStock && (
-                        <div style={{
-                          position: "absolute",
-                          inset: 0,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          background: "rgba(0,0,0,0.45)",
-                        }}>
-                          <div style={{
-                            background: "var(--red)",
-                            color: "#fff",
-                            fontSize: 10,
-                            fontWeight: 800,
-                            letterSpacing: "0.08em",
-                            textTransform: "uppercase",
-                            padding: "4px 10px",
-                            borderRadius: 6,
-                          }}>
-                            Out of Stock
-                          </div>
+                        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.45)" }}>
+                          {canBreakFromSet ? (
+                            <div style={{ background: "#8b5cf6", color: "#fff", fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", padding: "4px 10px", borderRadius: 6, textAlign: 'center' }}>
+                              In a Set<br /><span style={{ fontSize: 9, fontWeight: 400, opacity: 0.9 }}>tap to break</span>
+                            </div>
+                          ) : (
+                            <div style={{ background: "var(--red)", color: "#fff", fontSize: 10, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", padding: "4px 10px", borderRadius: 6 }}>
+                              Out of Stock
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -849,9 +936,10 @@ export default function POSPage() {
                     {/* Info */}
                     <div
                       onClick={() => {
+                        if (canBreakFromSet) { setBreakSetPrompt({ product: p, availableSets }); return; }
                         if (!canSellLoose && !isOutOfStock) addToCart(p, isBox ? 'box' : null);
                       }}
-                      style={{ padding: "8px 10px 6px", cursor: (!canSellLoose && !isOutOfStock) ? "pointer" : "default", flex: 1 }}
+                      style={{ padding: "8px 10px 6px", cursor: (canBreakFromSet || (!canSellLoose && !isOutOfStock)) ? "pointer" : "default", flex: 1 }}
                     >
                       <div style={{ fontWeight: 600, fontSize: 13, color: isOutOfStock ? "var(--text-muted)" : "var(--text)", lineHeight: 1.3, marginBottom: 3, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
                         {p.name}
@@ -860,9 +948,11 @@ export default function POSPage() {
                         <div style={{ fontSize: 10, color: "var(--accent)", fontWeight: 500 }}>{p.brand.name}</div>
                       )}
                       {selectedWarehouse && (
-                        <div style={{ marginTop: 4, fontSize: 10, fontWeight: 700, color: isOutOfStock ? "var(--red)" : isLowStock ? "var(--yellow)" : "var(--green)" }}>
+                        <div style={{ marginTop: 4, fontSize: 10, fontWeight: 700, color: isOutOfStock ? (canBreakFromSet ? '#8b5cf6' : "var(--red)") : isLowStock ? "var(--yellow)" : "var(--green)" }}>
                           {isOutOfStock
-                            ? (status === "no_record" ? "Not stocked" : "Out of stock")
+                            ? canBreakFromSet
+                              ? `In set: ${availableSets[0].setProduct.name}`
+                              : (status === "no_record" ? "Not stocked" : "Out of stock")
                             : isBox
                             ? `${stock} box${stock !== 1 ? 'es' : ''}${loose > 0 ? ` · ${loose} loose` : ''} (${totalPiecesAvailable} pcs)`
                             : isLowStock ? `⚠ Low: ${stock}` : `✓ ${stock} in stock`}
@@ -897,12 +987,30 @@ export default function POSPage() {
                           + Add Box · Rs {effectiveSellPrice}
                         </button>
                       </div>
+                    ) : !isOutOfStock && isSet ? (
+                      <div style={{ display: "flex", gap: 4, padding: "6px 8px", borderTop: "1px solid var(--border)" }}>
+                        <button onClick={() => addToCart(p, null)}
+                          style={{ flex: 2, padding: "5px", borderRadius: 6, border: "1px solid var(--accent)", background: "var(--accent)18", color: "var(--accent)", fontWeight: 700, cursor: "pointer", fontSize: 11 }}>
+                          + Sell Set
+                        </button>
+                        <button onClick={() => setBreakSetPrompt({ product: p, mode: 'break_set', availableSets: [{ setProduct: { ...p, _warehouseQty: stock }, qty: 1 }] })}
+                          style={{ flex: 1, padding: "5px", borderRadius: 6, border: "1px solid #8b5cf6", background: "#8b5cf608", color: "#8b5cf6", fontWeight: 700, cursor: "pointer", fontSize: 10 }}>
+                          <Layers size={11} style={{ display: 'inline', verticalAlign: 'middle' }} /> Break
+                        </button>
+                      </div>
                     ) : !isOutOfStock ? (
                       <div style={{ padding: "6px 8px", borderTop: "1px solid var(--border)" }}>
                         <button
                           onClick={() => addToCart(p, null)}
                           style={{ width: "100%", padding: "5px", borderRadius: 6, border: "1px solid var(--accent)", background: "var(--accent)18", color: "var(--accent)", fontWeight: 700, cursor: "pointer", fontSize: 11 }}>
                           + Add · Rs {effectiveSellPrice}
+                        </button>
+                      </div>
+                    ) : canBreakFromSet ? (
+                      <div style={{ padding: "6px 8px", borderTop: "1px solid var(--border)" }}>
+                        <button onClick={() => setBreakSetPrompt({ product: p, availableSets })}
+                          style={{ width: "100%", padding: "5px", borderRadius: 6, border: "1px solid #8b5cf6", background: "#8b5cf608", color: "#8b5cf6", fontWeight: 700, cursor: "pointer", fontSize: 11 }}>
+                          <Layers size={11} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />Break Set to Sell
                         </button>
                       </div>
                     ) : null}
@@ -1140,6 +1248,26 @@ export default function POSPage() {
               </div>
             )}
 
+            {/* Shipping cost */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, fontSize: 13 }}>
+              <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>Shipping</span>
+              <input
+                type="number"
+                className="form-input"
+                style={{ width: 90, padding: "4px 6px", fontSize: 12, textAlign: "right" }}
+                min="0"
+                value={shippingCost || ""}
+                placeholder="0"
+                onChange={(e) => setShippingCost(parseFloat(e.target.value) || 0)}
+              />
+            </div>
+            {shippingCost > 0 && (
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-muted)" }}>
+                <span>Shipping cost</span>
+                <span>+{fmt(shippingCost)}</span>
+              </div>
+            )}
+
             <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 17, paddingTop: 8, borderTop: "2px solid var(--border)", marginTop: 2 }}>
               <span>Total</span>
               <span style={{ color: "var(--green)" }}>{fmt(grandTotal)}</span>
@@ -1223,6 +1351,33 @@ export default function POSPage() {
 
       {receipt && (
         <ReceiptModal sale={receipt} store={storeSettings} onClose={() => setReceipt(null)} />
+      )}
+
+      {breakSetPrompt && !breakSetPrompt.mode && (
+        <BreakSetPromptModal
+          product={breakSetPrompt.product}
+          availableSets={breakSetPrompt.availableSets}
+          warehouseId={selectedWarehouse}
+          onClose={() => setBreakSetPrompt(null)}
+          onBreakDone={async () => {
+            setBreakSetPrompt(null);
+            await loadProducts();
+            addToCart(breakSetPrompt.product, null);
+          }}
+        />
+      )}
+
+      {breakSetPrompt?.mode === 'break_set' && (
+        <BreakSetPromptModal
+          product={breakSetPrompt.product}
+          availableSets={breakSetPrompt.availableSets}
+          warehouseId={selectedWarehouse}
+          onClose={() => setBreakSetPrompt(null)}
+          onBreakDone={async () => {
+            setBreakSetPrompt(null);
+            await loadProducts();
+          }}
+        />
       )}
     </div>
   );

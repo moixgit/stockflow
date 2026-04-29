@@ -276,6 +276,7 @@ const saleSchema = new Schema({
   subtotal: { type: Number, default: 0 },
   taxAmount: { type: Number, default: 0 },
   discountAmount: { type: Number, default: 0 },
+  shippingCost: { type: Number, default: 0 },
   grandTotal: { type: Number, default: 0 },
   paymentMethod: { type: String, enum: ['cash', 'card', 'bank_transfer', 'cheque', 'credit'], default: 'cash' },
   amountPaid: { type: Number, default: 0 },

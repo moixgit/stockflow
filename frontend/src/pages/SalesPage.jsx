@@ -61,9 +61,10 @@ ${sale.items.map(item => {
   </div></div>`;
 }).join('')}
 <div class="line"></div>
-${sale.subtotal !== sale.grandTotal ? `<div class="row"><span>Subtotal</span><span>${fmt(sale.subtotal)}</span></div>` : ''}
+${(sale.subtotal !== sale.grandTotal || sale.shippingCost > 0) ? `<div class="row"><span>Subtotal</span><span>${fmt(sale.subtotal)}</span></div>` : ''}
 ${sale.taxAmount > 0 ? `<div class="row"><span>Tax</span><span>${fmt(sale.taxAmount)}</span></div>` : ''}
 ${sale.discountAmount > 0 ? `<div class="row"><span>Discount</span><span>-${fmt(sale.discountAmount)}</span></div>` : ''}
+${sale.shippingCost > 0 ? `<div class="row"><span>Shipping</span><span>+${fmt(sale.shippingCost)}</span></div>` : ''}
 <div class="total-row"><span>TOTAL</span><span>${fmt(sale.grandTotal)}</span></div>
 <div class="row"><span>Paid (${(sale.paymentMethod || 'cash').replace('_', ' ')})</span><span>${fmt(sale.amountPaid)}</span></div>
 ${sale.changeAmount > 0 ? `<div class="row"><span>Change</span><span>${fmt(sale.changeAmount)}</span></div>` : ''}
@@ -183,7 +184,7 @@ function SaleDetailModal({ sale: init, onClose, onRefund, store, isAdmin }) {
           {/* Totals */}
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <div style={{ minWidth: 240, display: 'flex', flexDirection: 'column', gap: 5 }}>
-              {sale.subtotal !== sale.grandTotal && (
+              {(sale.subtotal !== sale.grandTotal || sale.shippingCost > 0) && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
                   <span style={{ color: 'var(--text-muted)' }}>Subtotal</span><span>{fmt(sale.subtotal)}</span>
                 </div>
@@ -196,6 +197,11 @@ function SaleDetailModal({ sale: init, onClose, onRefund, store, isAdmin }) {
               {sale.discountAmount > 0 && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
                   <span style={{ color: 'var(--text-muted)' }}>Discount</span><span style={{ color: 'var(--red)' }}>-{fmt(sale.discountAmount)}</span>
+                </div>
+              )}
+              {sale.shippingCost > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                  <span style={{ color: 'var(--text-muted)' }}>Shipping</span><span>+{fmt(sale.shippingCost)}</span>
                 </div>
               )}
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 17, fontWeight: 800, paddingTop: 8, borderTop: '2px solid var(--border)' }}>

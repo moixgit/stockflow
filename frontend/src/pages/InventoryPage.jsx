@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../utils/api.js';
 import toast from 'react-hot-toast';
-import { RefreshCw, AlertTriangle, Edit2, Plus, Search, X, Package, ChevronDown, PackageOpen } from 'lucide-react';
+import { RefreshCw, AlertTriangle, Edit2, Plus, Search, X, Package, ChevronDown, PackageOpen, Layers } from 'lucide-react';
 import { useAuthStore } from '../store/authStore.js';
 
 function ProductSearch({ products, value, onChange }) {
@@ -401,6 +401,106 @@ function OpenBoxModal({ inv, onClose, onSave }) {
   );
 }
 
+function BreakSetModal({ inv, onClose, onSave }) {
+  const [setCount, setSetCount] = useState(1);
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const components = inv.product?.setComponents || [];
+  const available = inv.quantity;
+  const valid = setCount >= 1 && setCount <= available;
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!valid) return;
+    setSaving(true);
+    try {
+      await api.post('/inventory/break-set', {
+        setProductId: inv.product._id,
+        warehouseId: inv.warehouse._id,
+        setCount: +setCount,
+        notes,
+      });
+      toast.success(`Broke ${setCount} set${setCount > 1 ? 's' : ''} → components released to inventory`);
+      onSave();
+    } catch (err) { toast.error(err?.message || 'Failed'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: 460 }}>
+        <div className="modal-header">
+          <h2 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Layers size={18} /> Break Set
+          </h2>
+          <button className="btn btn-ghost btn-icon" onClick={onClose}>✕</button>
+        </div>
+
+        <div style={{ marginBottom: 16, padding: 12, background: 'var(--bg-elevated)', borderRadius: 8 }}>
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>{inv.product.name}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{inv.warehouse.name} · {available} set{available !== 1 ? 's' : ''} in stock</div>
+        </div>
+
+        {components.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', marginBottom: 8 }}>Components per set</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {components.map((comp, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 10px', background: 'var(--bg-elevated)', borderRadius: 7, border: '1px solid var(--border)' }}>
+                  <span style={{ fontSize: 13, fontWeight: 500 }}>{comp.product?.name || 'Unknown'}</span>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{comp.product?.sku}</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent)15', borderRadius: 4, padding: '1px 7px' }}>×{comp.quantity || 1}</span>
+                    {valid && setCount > 0 && <span style={{ fontSize: 11, color: 'var(--green)', fontWeight: 600 }}>+{(comp.quantity || 1) * setCount}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div className="form-group">
+            <label className="form-label">Sets to Break</label>
+            <input className="form-input" type="number" min="1" max={available} value={setCount}
+              onChange={e => setSetCount(+e.target.value)} required />
+            {setCount > available && <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 4 }}>Only {available} set{available !== 1 ? 's' : ''} available</div>}
+          </div>
+
+          {valid && setCount > 0 && (
+            <div style={{ background: 'var(--accent)0d', border: '1px solid var(--accent)33', borderRadius: 8, padding: '10px 14px' }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>After breaking</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
+                <span style={{ color: 'var(--text-muted)' }}>{inv.product.name} sets</span>
+                <span style={{ fontWeight: 700 }}>{available} <span style={{ color: 'var(--red)' }}>→ {available - setCount}</span></span>
+              </div>
+              {components.map((comp, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--green)' }}>
+                  <span>{comp.product?.name}</span>
+                  <span style={{ fontWeight: 600 }}>+{(comp.quantity || 1) * setCount} to inventory</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="form-group">
+            <label className="form-label">Notes <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}>(optional)</span></label>
+            <input className="form-input" value={notes} onChange={e => setNotes(e.target.value)} placeholder="Reason for breaking…" />
+          </div>
+
+          <div className="modal-footer" style={{ margin: 0, padding: 0, border: 'none' }}>
+            <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+            <button type="submit" className="btn btn-primary" disabled={saving || !valid} style={{ background: '#8b5cf6', borderColor: '#8b5cf6' }}>
+              {saving ? <span className="spinner" /> : `Break ${setCount} Set${setCount !== 1 ? 's' : ''}`}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function InventoryPage() {
   const [inventory, setInventory] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
@@ -408,6 +508,7 @@ export default function InventoryPage() {
   const [warehouseFilter, setWarehouseFilter] = useState('');
   const [adjustItem, setAdjustItem] = useState(null);
   const [openBoxItem, setOpenBoxItem] = useState(null);
+  const [breakSetItem, setBreakSetItem] = useState(null);
   const [addStockOpen, setAddStockOpen] = useState(false);
   const { isInventoryManager } = useAuthStore();
 
@@ -505,6 +606,12 @@ export default function InventoryPage() {
                                 <PackageOpen size={13} />
                               </button>
                             )}
+                            {inv.product?.productType === 'set' && inv.quantity > 0 && (
+                              <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setBreakSetItem(inv)}
+                                title="Break set → release components" style={{ color: '#8b5cf6' }}>
+                                <Layers size={13} />
+                              </button>
+                            )}
                             <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setAdjustItem(inv)} title="Adjust stock">
                               <Edit2 size={13} />
                             </button>
@@ -522,6 +629,7 @@ export default function InventoryPage() {
 
       {adjustItem && <AdjustModal inv={adjustItem} onClose={() => setAdjustItem(null)} onSave={() => { setAdjustItem(null); load(); }} />}
       {openBoxItem && <OpenBoxModal inv={openBoxItem} onClose={() => setOpenBoxItem(null)} onSave={() => { setOpenBoxItem(null); load(); }} />}
+      {breakSetItem && <BreakSetModal inv={breakSetItem} onClose={() => setBreakSetItem(null)} onSave={() => { setBreakSetItem(null); load(); }} />}
       {addStockOpen && <AddStockModal warehouses={warehouses} onClose={() => setAddStockOpen(false)} onSave={() => { setAddStockOpen(false); load(); }} />}
     </div>
   );

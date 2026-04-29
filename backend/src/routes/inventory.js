@@ -15,7 +15,7 @@ router.get('/', async (req, res) => {
     if (product) query.product = product;
 
     const inventory = await Inventory.find(query)
-      .populate({ path: 'product', match: { isActive: true }, populate: [{ path: 'category', select: 'name' }, { path: 'vendors', select: 'name' }] })
+      .populate({ path: 'product', match: { isActive: true }, populate: [{ path: 'category', select: 'name' }, { path: 'vendors', select: 'name' }, { path: 'setComponents.product', select: 'name sku' }] })
       .populate('warehouse', 'name code');
 
     const filtered = inventory.filter(i => i.product);
@@ -116,6 +116,71 @@ router.post('/open-box', authorize('admin', 'inventory_manager'), async (req, re
     });
 
     res.json({ success: true, data: inv, piecesReleased });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// Break a set product into its components
+router.post('/break-set', authorize('admin', 'inventory_manager'), async (req, res) => {
+  try {
+    const { setProductId, warehouseId, setCount = 1, notes } = req.body;
+
+    const setProduct = await Product.findById(setProductId)
+      .populate('setComponents.product', 'name sku productType piecesPerBox');
+    if (!setProduct || setProduct.productType !== 'set')
+      return res.status(400).json({ success: false, message: 'Product is not a set' });
+    if (!setProduct.setComponents?.length)
+      return res.status(400).json({ success: false, message: 'Set has no components defined' });
+
+    const setInv = await Inventory.findOne({ product: setProductId, warehouse: warehouseId });
+    if (!setInv || setInv.quantity < setCount)
+      return res.status(400).json({ success: false, message: `Only ${setInv?.quantity || 0} sets in stock` });
+
+    const prevSetQty = setInv.quantity;
+    setInv.quantity -= setCount;
+    await setInv.save();
+
+    await InventoryMovement.create({
+      product: setProductId, warehouse: warehouseId,
+      type: 'out', movementUnit: 'pieces', quantity: setCount,
+      previousQuantity: prevSetQty, newQuantity: setInv.quantity,
+      reference: 'BREAK-SET', referenceType: 'adjustment',
+      notes: notes || `Broke ${setCount} set${setCount > 1 ? 's' : ''} into components`,
+      performedBy: req.user._id,
+    });
+
+    const released = [];
+    for (const comp of setProduct.setComponents) {
+      const compId = comp.product?._id || comp.product;
+      const compQty = (comp.quantity || 1) * setCount;
+      const isBoxComp = comp.product?.productType === 'box';
+
+      let compInv = await Inventory.findOneAndUpdate(
+        { product: compId, warehouse: warehouseId },
+        { $setOnInsert: { product: compId, warehouse: warehouseId, quantity: 0, looseQuantity: 0, reservedQuantity: 0 } },
+        { upsert: true, new: true }
+      );
+
+      const prevQty = isBoxComp ? (compInv.looseQuantity || 0) : compInv.quantity;
+      if (isBoxComp) {
+        compInv.looseQuantity = (compInv.looseQuantity || 0) + compQty;
+      } else {
+        compInv.quantity += compQty;
+      }
+      await compInv.save();
+
+      await InventoryMovement.create({
+        product: compId, warehouse: warehouseId,
+        type: 'in', movementUnit: 'pieces', quantity: compQty,
+        previousQuantity: prevQty, newQuantity: isBoxComp ? compInv.looseQuantity : compInv.quantity,
+        reference: 'BREAK-SET', referenceType: 'adjustment',
+        notes: `Released from ${setCount} broken ${setProduct.name}`,
+        performedBy: req.user._id,
+      });
+
+      released.push({ product: comp.product, quantityAdded: compQty, newTotal: isBoxComp ? compInv.looseQuantity : compInv.quantity });
+    }
+
+    res.json({ success: true, data: { setInv, released } });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 

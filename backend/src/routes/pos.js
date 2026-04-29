@@ -70,7 +70,7 @@ router.post('/', async (req, res) => {
 
     const subtotal = items.reduce((s, i) => s + i.total, 0);
     const taxAmount = items.reduce((s, i) => s + (i.total * (i.taxRate || 0) / 100), 0);
-    const grandTotal = subtotal + taxAmount - (req.body.discountAmount || 0);
+    const grandTotal = subtotal + taxAmount - (req.body.discountAmount || 0) + (req.body.shippingCost || 0);
 
     const sale = await Sale.create({
       ...req.body,
