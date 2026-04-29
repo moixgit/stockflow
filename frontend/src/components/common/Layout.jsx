@@ -24,6 +24,9 @@ import {
   Settings,
   Sun,
   Moon,
+  ShieldAlert,
+  ClipboardCheck,
+  Receipt,
 } from "lucide-react";
 import { useThemeStore } from "../../store/themeStore.js";
 
@@ -39,6 +42,13 @@ const navItems = [
     to: "/pos",
     icon: ShoppingCart,
     label: "Point of Sale",
+    roles: ["admin", "inventory_manager", "salesperson"],
+    section: "main",
+  },
+  {
+    to: "/sales",
+    icon: Receipt,
+    label: "Sales",
     roles: ["admin", "inventory_manager", "salesperson"],
     section: "main",
   },
@@ -74,6 +84,20 @@ const navItems = [
     to: "/warehouses",
     icon: Warehouse,
     label: "Warehouses",
+    roles: ["admin", "inventory_manager"],
+    section: "inventory",
+  },
+  {
+    to: "/breakages",
+    icon: ShieldAlert,
+    label: "Broken & Missing",
+    roles: ["admin", "inventory_manager"],
+    section: "inventory",
+  },
+  {
+    to: "/inspections",
+    icon: ClipboardCheck,
+    label: "Inspections",
     roles: ["admin", "inventory_manager"],
     section: "inventory",
   },

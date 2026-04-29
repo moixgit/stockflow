@@ -47,6 +47,7 @@ router.get('/', async (req, res) => {
       .populate('category', 'name')
       .populate('brand', 'name')
       .populate('vendors', 'name company')
+      .populate('setComponents.product', 'name sku')
       .sort({ name: 1 })
       .skip((page - 1) * limit)
       .limit(Number(limit));
@@ -59,7 +60,7 @@ router.get('/', async (req, res) => {
     for (const inv of inventories) {
       const pid = inv.product.toString();
       if (!invMap[pid]) invMap[pid] = [];
-      invMap[pid].push({ warehouse: inv.warehouse, quantity: inv.quantity });
+      invMap[pid].push({ warehouse: inv.warehouse, quantity: inv.quantity, looseQuantity: inv.looseQuantity || 0 });
     }
 
     const productsWithStock = products.map(p => ({

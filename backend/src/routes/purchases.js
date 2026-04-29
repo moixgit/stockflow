@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { PurchaseOrder, Inventory, InventoryMovement, Vendor, Sale, Product } from '../models/index.js';
+import { PurchaseOrder, Inventory, InventoryMovement, Vendor, Sale, Product, Breakage, Counter, VendorPayment } from '../models/index.js';
 import { protect, authorize } from '../middleware/auth.js';
 import { generatePONumber, generateSaleNumber } from '../utils/counter.js';
 
@@ -10,7 +10,7 @@ const populatePO = (q) => q
   .populate('vendor', 'name company phone email address')
   .populate('warehouse', 'name code address')
   .populate('createdBy', 'name email')
-  .populate('items.product', 'name sku barcode unit sellingPrice');
+  .populate('items.product', 'name sku barcode unit sellingPrice productType piecesPerBox');
 
 router.get('/', async (req, res) => {
   try {
@@ -50,6 +50,12 @@ router.post('/', authorize('admin', 'inventory_manager'), async (req, res) => {
     const saleSubtotal = isDirectSale ? items.reduce((s, i) => s + (i.sellingPrice * i.orderedQty), 0) : 0;
     const saleGrandTotal = isDirectSale ? saleSubtotal + taxAmount - (req.body.discountAmount || 0) : 0;
 
+    const advanceAmount = Math.min(Number(req.body.advanceAmount || 0), grandTotal);
+    const poPaymentTerms = req.body.poPaymentTerms || 'credit';
+
+    // Derive initial paidAmount and paymentStatus from advance
+    const initialPaid = poPaymentTerms === 'prepaid' ? grandTotal : advanceAmount;
+
     const po = await PurchaseOrder.create({
       ...req.body,
       warehouse: isDirectSale ? null : (req.body.warehouse || null),
@@ -59,8 +65,26 @@ router.post('/', authorize('admin', 'inventory_manager'), async (req, res) => {
       taxAmount,
       grandTotal,
       saleGrandTotal,
+      poPaymentTerms,
+      advanceAmount,
+      paidAmount: initialPaid,
+      paymentStatus: initialPaid >= grandTotal ? 'paid' : initialPaid > 0 ? 'partial' : 'unpaid',
       createdBy: req.user._id,
     });
+
+    // Record advance payment if any
+    if (initialPaid > 0 && req.body.advanceMethod) {
+      await VendorPayment.create({
+        vendor: po.vendor,
+        purchaseOrder: po._id,
+        amount: initialPaid,
+        method: req.body.advanceMethod,
+        referenceNumber: req.body.advanceReference || undefined,
+        notes: `Advance payment for PO ${poNumber}`,
+        date: new Date(),
+        recordedBy: req.user._id,
+      });
+    }
 
     res.status(201).json({ success: true, data: await populatePO(PurchaseOrder.findById(po._id)) });
   } catch (err) { res.status(400).json({ success: false, message: err.message }); }
@@ -121,8 +145,11 @@ router.patch('/:id/status', authorize('admin', 'inventory_manager'), async (req,
       for (const item of po.items) {
         const remaining = item.orderedQty - (item.receivedQty || 0);
         if (remaining > 0) {
+          const product = await Product.findById(item.product).select('productType');
+          const isBoxProduct = product?.productType === 'box';
+
           let inv = await Inventory.findOne({ product: item.product, warehouse: po.warehouse });
-          if (!inv) inv = await Inventory.create({ product: item.product, warehouse: po.warehouse, quantity: 0, reservedQuantity: 0 });
+          if (!inv) inv = await Inventory.create({ product: item.product, warehouse: po.warehouse, quantity: 0, looseQuantity: 0, reservedQuantity: 0 });
           const prevQty = inv.quantity;
           inv.quantity += remaining;
           await inv.save();
@@ -131,6 +158,7 @@ router.patch('/:id/status', authorize('admin', 'inventory_manager'), async (req,
             product: item.product,
             warehouse: po.warehouse,
             type: 'in',
+            movementUnit: isBoxProduct ? 'boxes' : 'pieces',
             quantity: remaining,
             previousQuantity: prevQty,
             newQuantity: inv.quantity,
@@ -142,6 +170,14 @@ router.patch('/:id/status', authorize('admin', 'inventory_manager'), async (req,
         item.receivedQty = item.orderedQty;
       }
     }
+    if (status === 'received') {
+      const alreadyPaid = po.poPaymentTerms === 'prepaid' ? po.grandTotal : (po.advanceAmount || 0);
+      const outstandingOnReceive = Math.max(0, po.grandTotal - alreadyPaid);
+      if (outstandingOnReceive > 0) {
+        await Vendor.findByIdAndUpdate(po.vendor, { $inc: { balance: outstandingOnReceive } });
+      }
+    }
+
     await po.save();
     res.json({ success: true, data: await populatePO(PurchaseOrder.findById(po._id)) });
   } catch (err) { res.status(400).json({ success: false, message: err.message }); }
@@ -161,25 +197,64 @@ router.post('/:id/receive', authorize('admin', 'inventory_manager'), async (req,
     for (const ri of receivedItems) {
       const item = po.items.id(ri.itemId);
       if (!item) continue;
+
+      const product = await Product.findById(item.product).select('productType piecesPerBox name');
+      const isBoxProduct = product?.productType === 'box';
+      const receiveAsLoose = isBoxProduct && ri.receivingUnit === 'pieces';
+      const brokenQty = Math.max(0, Number(ri.brokenQty || 0));
+      const netReceived = ri.receivedQty - brokenQty;
+
+      if (netReceived < 0)
+        return res.status(400).json({ success: false, message: `Broken quantity cannot exceed received quantity for "${product?.name}"` });
+
       item.receivedQty = (item.receivedQty || 0) + ri.receivedQty;
 
       let inv = await Inventory.findOne({ product: item.product, warehouse: po.warehouse });
-      if (!inv) inv = await Inventory.create({ product: item.product, warehouse: po.warehouse, quantity: 0 });
-      const prevQty = inv.quantity;
-      inv.quantity += ri.receivedQty;
-      await inv.save();
+      if (!inv) inv = await Inventory.create({ product: item.product, warehouse: po.warehouse, quantity: 0, looseQuantity: 0 });
 
-      await InventoryMovement.create({
-        product: item.product,
-        warehouse: po.warehouse,
-        type: 'in',
-        quantity: ri.receivedQty,
-        previousQuantity: prevQty,
-        newQuantity: inv.quantity,
-        reference: po.poNumber,
-        referenceType: 'purchase',
-        performedBy: req.user._id,
-      });
+      // Add net (non-broken) to inventory
+      if (netReceived > 0) {
+        const prevQty = receiveAsLoose ? (inv.looseQuantity || 0) : inv.quantity;
+        if (receiveAsLoose) {
+          inv.looseQuantity = (inv.looseQuantity || 0) + netReceived;
+        } else {
+          inv.quantity += netReceived;
+        }
+        await inv.save();
+
+        await InventoryMovement.create({
+          product: item.product,
+          warehouse: po.warehouse,
+          type: 'in',
+          movementUnit: receiveAsLoose ? 'pieces' : (isBoxProduct ? 'boxes' : 'pieces'),
+          quantity: netReceived,
+          previousQuantity: prevQty,
+          newQuantity: receiveAsLoose ? inv.looseQuantity : inv.quantity,
+          reference: po.poNumber,
+          referenceType: 'purchase',
+          notes: brokenQty > 0 ? `Received ${ri.receivedQty}, ${brokenQty} broken on arrival` : undefined,
+          performedBy: req.user._id,
+        });
+      }
+
+      // Auto-create breakage record for broken-on-arrival items
+      if (brokenQty > 0) {
+        const brkCounter = await Counter.findByIdAndUpdate('breakage', { $inc: { seq: 1 } }, { new: true, upsert: true });
+        await Breakage.create({
+          breakageNumber: `BRK-${String(brkCounter.seq).padStart(4, '0')}`,
+          type: 'broken',
+          product: item.product,
+          warehouse: po.warehouse,
+          quantity: brokenQty,
+          unit: receiveAsLoose ? 'pieces' : (isBoxProduct ? 'boxes' : 'pieces'),
+          source: 'shipping',
+          purchaseOrder: po._id,
+          notes: `Broken on arrival from PO ${po.poNumber}`,
+          date: new Date(),
+          reportedBy: req.user._id,
+          status: 'confirmed',
+        });
+      }
     }
 
     const allReceived = po.items.every(i => i.receivedQty >= i.orderedQty);
@@ -188,15 +263,21 @@ router.post('/:id/receive', authorize('admin', 'inventory_manager'), async (req,
     if (allReceived) po.receivedDate = new Date();
     await po.save();
 
-    await Vendor.findByIdAndUpdate(po.vendor, { $inc: { balance: po.grandTotal } });
+    // Only add outstanding amount to vendor balance (deduct already-paid advance)
+    const alreadyPaid = po.poPaymentTerms === 'prepaid' ? po.grandTotal : (po.advanceAmount || 0);
+    const outstandingOnReceive = Math.max(0, po.grandTotal - alreadyPaid);
+    if (outstandingOnReceive > 0) {
+      await Vendor.findByIdAndUpdate(po.vendor, { $inc: { balance: outstandingOnReceive } });
+    }
+
     res.json({ success: true, data: await populatePO(PurchaseOrder.findById(po._id)) });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-// Record payment for a standard PO
+// Record payment for a PO (standard or direct sale)
 router.patch('/:id/payment', authorize('admin', 'inventory_manager'), async (req, res) => {
   try {
-    const { amount } = req.body;
+    const { amount, method = 'cash', referenceNumber, notes } = req.body;
     if (!amount || Number(amount) <= 0)
       return res.status(400).json({ success: false, message: 'Amount must be greater than 0' });
     const po = await PurchaseOrder.findById(req.params.id);
@@ -204,9 +285,28 @@ router.patch('/:id/payment', authorize('admin', 'inventory_manager'), async (req
     if (po.status === 'cancelled')
       return res.status(400).json({ success: false, message: 'Cannot record payment for a cancelled PO' });
 
+    const isDS = po.type === 'direct_sale';
+    // For direct sales compare against sale revenue; for standard POs compare against purchase cost
+    const targetAmount = isDS ? (po.saleGrandTotal || po.grandTotal) : po.grandTotal;
+
     po.paidAmount = (po.paidAmount || 0) + Number(amount);
-    po.paymentStatus = po.paidAmount >= po.grandTotal ? 'paid' : (po.paidAmount > 0 ? 'partial' : 'unpaid');
+    po.paymentStatus = po.paidAmount >= targetAmount ? 'paid' : (po.paidAmount > 0 ? 'partial' : 'unpaid');
     await po.save();
+
+    if (!isDS) {
+      // For standard POs: create vendor payment record and adjust vendor balance
+      await VendorPayment.create({
+        vendor: po.vendor,
+        purchaseOrder: po._id,
+        amount: Number(amount),
+        method,
+        referenceNumber: referenceNumber || undefined,
+        notes: notes || `Payment for PO ${po.poNumber}`,
+        date: new Date(),
+        recordedBy: req.user._id,
+      });
+      await Vendor.findByIdAndUpdate(po.vendor, { $inc: { balance: -Number(amount) } });
+    }
 
     res.json({ success: true, data: await populatePO(PurchaseOrder.findById(po._id)) });
   } catch (err) { res.status(400).json({ success: false, message: err.message }); }

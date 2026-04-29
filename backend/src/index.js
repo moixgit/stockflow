@@ -20,6 +20,8 @@ import dashboardRoutes from './routes/dashboard.js';
 import reportRoutes from './routes/reports.js';
 import brandRoutes from './routes/brands.js';
 import settingsRoutes from './routes/settings.js';
+import breakageRoutes from './routes/breakages.js';
+import inspectionRoutes from './routes/inspections.js';
 
 const app = express();
 
@@ -50,6 +52,8 @@ app.use('/api/brands', brandRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/breakages', breakageRoutes);
+app.use('/api/inspections', inspectionRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));

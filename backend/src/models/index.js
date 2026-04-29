@@ -107,6 +107,21 @@ const productSchema = new Schema({
   maxStock: { type: Number, default: 1000 },
   isActive: { type: Boolean, default: true },
   tags: [String],
+  // Measurement-based pricing
+  pricingMode: { type: String, enum: ['per_piece', 'per_sqm', 'per_meter'], default: 'per_piece' },
+  dimensionLength: { type: Number, default: 0 },
+  dimensionWidth: { type: Number, default: 0 },
+  dimensionUnit: { type: String, enum: ['ft', 'm', 'cm', 'inch'], default: 'ft' },
+  // Packaging type
+  productType: { type: String, enum: ['standard', 'box', 'set'], default: 'standard' },
+  // For box products
+  piecesPerBox: { type: Number, default: 1 },
+  canSellLoose: { type: Boolean, default: true },
+  // For set products
+  setComponents: [{
+    product: { type: Schema.Types.ObjectId, ref: 'Product' },
+    quantity: { type: Number, default: 1 },
+  }],
 }, { timestamps: true });
 
 export const Product = model('Product', productSchema);
@@ -115,9 +130,10 @@ export const Product = model('Product', productSchema);
 const inventorySchema = new Schema({
   product: { type: Schema.Types.ObjectId, ref: 'Product', required: true },
   warehouse: { type: Schema.Types.ObjectId, ref: 'Warehouse', required: true },
-  quantity: { type: Number, default: 0 },
+  quantity: { type: Number, default: 0 },       // boxes (for box products) or pieces/sets
+  looseQuantity: { type: Number, default: 0 },  // loose pieces (only for box products)
   reservedQuantity: { type: Number, default: 0 },
-  location: String, // shelf/bin location
+  location: String,
 }, { timestamps: true });
 
 inventorySchema.index({ product: 1, warehouse: 1 }, { unique: true });
@@ -131,22 +147,82 @@ export const Inventory = model('Inventory', inventorySchema);
 const inventoryMovementSchema = new Schema({
   product: { type: Schema.Types.ObjectId, ref: 'Product', required: true },
   warehouse: { type: Schema.Types.ObjectId, ref: 'Warehouse', required: true },
-  type: { type: String, enum: ['in', 'out', 'transfer', 'adjustment', 'return'], required: true },
+  type: { type: String, enum: ['in', 'out', 'transfer', 'adjustment', 'return', 'breakage'], required: true },
+  movementUnit: { type: String, enum: ['pieces', 'boxes'], default: 'pieces' },
   quantity: { type: Number, required: true },
   previousQuantity: Number,
   newQuantity: Number,
-  reference: String, // PO number, sale number, etc.
-  referenceType: { type: String, enum: ['purchase', 'sale', 'transfer', 'adjustment', 'return'] },
+  reference: String,
+  referenceType: { type: String, enum: ['purchase', 'sale', 'transfer', 'adjustment', 'return', 'breakage'] },
   notes: String,
   performedBy: { type: Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 
 export const InventoryMovement = model('InventoryMovement', inventoryMovementSchema);
 
+// ─── BREAKAGE ────────────────────────────────────────────
+const breakageSchema = new Schema({
+  breakageNumber: { type: String, unique: true },
+  type: { type: String, enum: ['broken', 'missing'], default: 'broken' },
+  product: { type: Schema.Types.ObjectId, ref: 'Product', required: true },
+  warehouse: { type: Schema.Types.ObjectId, ref: 'Warehouse', required: true },
+  quantity: { type: Number, required: true },
+  unit: { type: String, enum: ['pieces', 'boxes'], default: 'pieces' },
+  source: { type: String, enum: ['shipping', 'handling', 'storage', 'inspection', 'other'], default: 'shipping' },
+  purchaseOrder: { type: Schema.Types.ObjectId, ref: 'PurchaseOrder' },
+  inspection: { type: Schema.Types.ObjectId, ref: 'InventoryInspection' },
+  notes: String,
+  date: { type: Date, default: Date.now },
+  reportedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+  status: { type: String, enum: ['pending', 'confirmed', 'resolved'], default: 'confirmed' },
+}, { timestamps: true });
+
+export const Breakage = model('Breakage', breakageSchema);
+
+// ─── INVENTORY INSPECTION ───────────────────────────────
+const inspectionItemSchema = new Schema({
+  product: { type: Schema.Types.ObjectId, ref: 'Product', required: true },
+  expectedQty: { type: Number, default: 0 },
+  expectedLooseQty: { type: Number, default: 0 },
+  actualQty: { type: Number, default: null },
+  actualLooseQty: { type: Number, default: null },
+  discrepancyType: { type: String, enum: ['broken', 'missing', null], default: null },
+  notes: String,
+});
+
+const inventoryInspectionSchema = new Schema({
+  inspectionNumber: { type: String, unique: true },
+  warehouse: { type: Schema.Types.ObjectId, ref: 'Warehouse', required: true },
+  status: { type: String, enum: ['draft', 'submitted', 'verified'], default: 'draft' },
+  items: [inspectionItemSchema],
+  notes: String,
+  performedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+  verifiedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+  verifiedAt: Date,
+}, { timestamps: true });
+
+export const InventoryInspection = model('InventoryInspection', inventoryInspectionSchema);
+
+// ─── VENDOR PAYMENT ─────────────────────────────────────
+const vendorPaymentSchema = new Schema({
+  vendor: { type: Schema.Types.ObjectId, ref: 'Vendor', required: true },
+  purchaseOrder: { type: Schema.Types.ObjectId, ref: 'PurchaseOrder' },
+  amount: { type: Number, required: true },
+  method: { type: String, enum: ['cash', 'cheque', 'bank_transfer', 'online'], required: true, default: 'cash' },
+  referenceNumber: String,
+  notes: String,
+  date: { type: Date, default: Date.now },
+  recordedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+}, { timestamps: true });
+
+export const VendorPayment = model('VendorPayment', vendorPaymentSchema);
+
 // ─── PURCHASE ORDER ─────────────────────────────────────
 const purchaseOrderSchema = new Schema({
   poNumber: { type: String, required: true, unique: true },
   type: { type: String, enum: ['standard', 'direct_sale'], default: 'standard' },
+  poPaymentTerms: { type: String, enum: ['credit', 'prepaid', 'partial'], default: 'credit' },
+  advanceAmount: { type: Number, default: 0 },
   vendor: { type: Schema.Types.ObjectId, ref: 'Vendor', required: true },
   warehouse: { type: Schema.Types.ObjectId, ref: 'Warehouse', default: null },
   status: { type: String, enum: ['draft', 'ordered', 'partial', 'received', 'cancelled', 'direct_sale'], default: 'draft' },
@@ -195,6 +271,7 @@ const saleSchema = new Schema({
     discount: { type: Number, default: 0 },
     taxRate: { type: Number, default: 0 },
     total: Number,
+    sellingUnit: { type: String, enum: ['box', 'loose', null], default: null },
   }],
   subtotal: { type: Number, default: 0 },
   taxAmount: { type: Number, default: 0 },

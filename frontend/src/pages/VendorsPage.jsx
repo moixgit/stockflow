@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../utils/api.js';
 import toast from 'react-hot-toast';
-import { Plus, Edit2, Store, Search, Star } from 'lucide-react';
+import { Plus, Edit2, Store, Search, Star, Eye } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 function VendorModal({ vendor, onClose, onSave }) {
   const [form, setForm] = useState(vendor || { name: '', company: '', email: '', phone: '', taxId: '', paymentTerms: 'NET30', creditLimit: 0, notes: '', rating: 3, address: { street: '', city: '', state: '', country: '', zip: '' } });
@@ -92,6 +93,7 @@ export default function VendorsPage() {
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null);
   const [search, setSearch] = useState('');
+  const navigate = useNavigate();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -150,7 +152,10 @@ export default function VendorsPage() {
                     </div>
                   </td>
                   <td>
-                    <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setModal(v)}><Edit2 size={13} /></button>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button className="btn btn-ghost btn-sm btn-icon" title="View Details" onClick={() => navigate(`/vendors/${v._id}`)}><Eye size={13} /></button>
+                      <button className="btn btn-ghost btn-sm btn-icon" title="Edit" onClick={() => setModal(v)}><Edit2 size={13} /></button>
+                    </div>
                   </td>
                 </tr>
               ))}

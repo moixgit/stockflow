@@ -17,6 +17,10 @@ import CategoriesPage from './pages/CategoriesPage.jsx';
 import ProductDetailPage from './pages/ProductDetailPage.jsx';
 import BrandsPage from './pages/BrandsPage.jsx';
 import SettingsPage from './pages/SettingsPage.jsx';
+import BreakagePage from './pages/BreakagePage.jsx';
+import InspectionPage from './pages/InspectionPage.jsx';
+import SalesPage from './pages/SalesPage.jsx';
+import VendorDetailPage from './pages/VendorDetailPage.jsx';
 
 function PrivateRoute({ children, roles }) {
   const { user } = useAuthStore();
@@ -37,10 +41,14 @@ export default function App() {
           <Route path="products" element={<ProductsPage />} />
           <Route path="products/:id" element={<ProductDetailPage />} />
           <Route path="pos" element={<POSPage />} />
+          <Route path="sales" element={<SalesPage />} />
           <Route path="purchases" element={<PrivateRoute roles={['admin','inventory_manager']}><PurchasesPage /></PrivateRoute>} />
           <Route path="inventory" element={<InventoryPage />} />
+          <Route path="breakages" element={<PrivateRoute roles={['admin','inventory_manager']}><BreakagePage /></PrivateRoute>} />
+          <Route path="inspections" element={<PrivateRoute roles={['admin','inventory_manager']}><InspectionPage /></PrivateRoute>} />
           <Route path="warehouses" element={<PrivateRoute roles={['admin','inventory_manager']}><WarehousesPage /></PrivateRoute>} />
           <Route path="vendors" element={<PrivateRoute roles={['admin','inventory_manager']}><VendorsPage /></PrivateRoute>} />
+          <Route path="vendors/:id" element={<PrivateRoute roles={['admin','inventory_manager']}><VendorDetailPage /></PrivateRoute>} />
           <Route path="categories" element={<PrivateRoute roles={['admin','inventory_manager']}><CategoriesPage /></PrivateRoute>} />
           <Route path="brands" element={<PrivateRoute roles={['admin','inventory_manager']}><BrandsPage /></PrivateRoute>} />
           <Route path="barcode" element={<BarcodePage />} />

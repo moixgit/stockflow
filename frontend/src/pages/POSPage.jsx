@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import api from "../utils/api.js";
 import toast from "react-hot-toast";
+import { calcPricePerPiece, dimensionDisplay } from "../utils/pricing.js";
 import {
   Search,
   Plus,
@@ -427,17 +428,28 @@ export default function POSPage() {
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [loadProducts]);
 
-  const getWarehouseStock = (product) => {
+  const getWarehouseInventory = (product) => {
     if (!selectedWarehouse || !product.stock) return null;
-    const inv = product.stock.find(s => String(s.warehouse?._id) === String(selectedWarehouse));
+    return product.stock.find(s => String(s.warehouse?._id) === String(selectedWarehouse)) || null;
+  };
+
+  const getWarehouseStock = (product) => {
+    const inv = getWarehouseInventory(product);
     return inv != null ? inv.quantity : null;
   };
 
+  const getLoosePieces = (product) => {
+    const inv = getWarehouseInventory(product);
+    return inv ? (inv.looseQuantity || 0) : 0;
+  };
+
   const getStockStatus = (product) => {
-    const stock = getWarehouseStock(product);
-    if (stock === null) return "no_record";
-    if (stock === 0) return "out";
-    if (stock <= (product.reorderPoint || 10)) return "low";
+    const inv = getWarehouseInventory(product);
+    if (!inv) return "no_record";
+    const isBox = product.productType === 'box';
+    const totalAvail = isBox ? inv.quantity + (inv.looseQuantity || 0) : inv.quantity;
+    if (totalAvail === 0) return "out";
+    if (inv.quantity <= (product.reorderPoint || 10)) return "low";
     return "in";
   };
 
@@ -471,42 +483,37 @@ export default function POSPage() {
     return acc;
   }, { in: 0, low: 0, out: 0 });
 
-  const addToCart = (product) => {
+  const addToCart = (product, sellingUnit = null) => {
+    const cartId = `${product._id}__${sellingUnit || ''}`;
+    const isBox = product.productType === 'box';
+    const basePrice = (sellingUnit === 'loose' && isBox)
+      ? (product.sellingPrice / (product.piecesPerBox || 1))
+      : product.sellingPrice;
+    const effectivePrice = calcPricePerPiece(product, basePrice);
+    const unitPrice = Math.round(effectivePrice * 100) / 100;
     setCart((prev) => {
-      const existing = prev.find((i) => i.product._id === product._id);
+      const existing = prev.find(i => i.cartId === cartId);
       if (existing)
-        return prev.map((i) =>
-          i.product._id === product._id
-            ? { ...i, quantity: i.quantity + 1 }
-            : i,
-        );
-      return [
-        ...prev,
-        { product, quantity: 1, discount: 0, unitPrice: product.sellingPrice },
-      ];
+        return prev.map(i => i.cartId === cartId ? { ...i, quantity: i.quantity + 1 } : i);
+      return [...prev, { cartId, product, quantity: 1, discount: 0, unitPrice, sellingUnit }];
     });
   };
 
-  const updateQty = (id, delta) => {
+  const updateQty = (cartId, delta) => {
     setCart((prev) =>
-      prev
-        .map((i) =>
-          i.product._id === id
-            ? { ...i, quantity: Math.max(0, i.quantity + delta) }
-            : i,
-        )
-        .filter((i) => i.quantity > 0),
+      prev.map(i => i.cartId === cartId ? { ...i, quantity: Math.max(0, i.quantity + delta) } : i)
+          .filter(i => i.quantity > 0)
     );
   };
 
-  const updateItemPrice = (id, price) =>
-    setCart((prev) => prev.map((i) => i.product._id === id ? { ...i, unitPrice: Math.max(0, parseFloat(price) || 0) } : i));
+  const updateItemPrice = (cartId, price) =>
+    setCart(prev => prev.map(i => i.cartId === cartId ? { ...i, unitPrice: Math.max(0, parseFloat(price) || 0) } : i));
 
-  const updateItemDiscount = (id, pct) =>
-    setCart((prev) => prev.map((i) => i.product._id === id ? { ...i, discount: Math.min(100, Math.max(0, parseFloat(pct) || 0)) } : i));
+  const updateItemDiscount = (cartId, pct) =>
+    setCart(prev => prev.map(i => i.cartId === cartId ? { ...i, discount: Math.min(100, Math.max(0, parseFloat(pct) || 0)) } : i));
 
-  const removeItem = (id) =>
-    setCart((prev) => prev.filter((i) => i.product._id !== id));
+  const removeItem = (cartId) =>
+    setCart(prev => prev.filter(i => i.cartId !== cartId));
 
   const itemsSubtotal = cart.reduce((s, i) => s + i.unitPrice * i.quantity, 0);
   const itemDiscountSaving = cart.reduce((s, i) => s + i.unitPrice * i.quantity * (i.discount / 100), 0);
@@ -550,6 +557,7 @@ export default function POSPage() {
           unitPrice: i.unitPrice,
           discount: i.discount,
           taxRate: i.product.taxRate || 0,
+          sellingUnit: i.sellingUnit || null,
         })),
         paymentMethod,
         amountPaid: parseFloat(amountPaid) || grandTotal,
@@ -713,54 +721,45 @@ export default function POSPage() {
             >
               {filtered.map((p) => {
                 const stock = getWarehouseStock(p);
+                const loose = getLoosePieces(p);
                 const status = getStockStatus(p);
+                const isBox = p.productType === 'box';
+                const canSellLoose = isBox && p.canSellLoose;
+                const piecesPerBox = p.piecesPerBox || 1;
                 const isOutOfStock = status === "out" || status === "no_record";
                 const isLowStock = status === "low";
+                const effectiveSellPrice = Math.round(calcPricePerPiece(p, p.sellingPrice) * 100) / 100;
+                const looseBasePrice = isBox ? p.sellingPrice / piecesPerBox : p.sellingPrice;
+                const loosePricePerPc = Math.round(calcPricePerPiece(p, looseBasePrice) * 100) / 100;
+                const totalPiecesAvailable = isBox ? (stock || 0) * piecesPerBox + loose : (stock || 0);
+                const dimLabel = dimensionDisplay(p);
 
                 return (
-                  <button
+                  <div
                     key={p._id}
-                    onClick={() => {
-                      if (isOutOfStock) {
-                        toast.error(
-                          status === "no_record"
-                            ? `"${p.name}" has no stock record for this warehouse`
-                            : `"${p.name}" is out of stock in this warehouse`,
-                          { duration: 3000 }
-                        );
-                        return;
-                      }
-                      addToCart(p);
-                    }}
                     style={{
                       background: isOutOfStock ? "var(--bg-elevated)" : "var(--bg-card)",
-                      border: `1px solid ${isOutOfStock ? "var(--border)" : "var(--border)"}`,
+                      border: `1px solid var(--border)`,
                       borderRadius: 12,
-                      padding: 0,
-                      cursor: isOutOfStock ? "not-allowed" : "pointer",
-                      transition: "border-color 0.15s, transform 0.15s, box-shadow 0.15s",
-                      textAlign: "left",
                       overflow: "hidden",
                       display: "flex",
                       flexDirection: "column",
-                      opacity: isOutOfStock ? 0.5 : 1,
+                      opacity: isOutOfStock ? 0.55 : 1,
                       position: "relative",
+                      transition: "border-color 0.15s, box-shadow 0.15s",
                     }}
-                    onMouseEnter={(e) => {
-                      if (isOutOfStock) return;
-                      e.currentTarget.style.borderColor = "var(--accent)";
-                      e.currentTarget.style.transform = "translateY(-3px)";
-                      e.currentTarget.style.boxShadow = "0 8px 24px rgba(108,99,255,0.2)";
-                    }}
-                    onMouseLeave={(e) => {
-                      if (isOutOfStock) return;
-                      e.currentTarget.style.borderColor = "var(--border)";
-                      e.currentTarget.style.transform = "none";
-                      e.currentTarget.style.boxShadow = "none";
-                    }}
+                    onMouseEnter={e => { if (!isOutOfStock) { e.currentTarget.style.borderColor = "var(--accent)"; e.currentTarget.style.boxShadow = "0 6px 20px rgba(108,99,255,0.15)"; }}}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.boxShadow = "none"; }}
                   >
-                    {/* Image area */}
+                    {/* Image area — click adds as box (or standard) */}
                     <div
+                      onClick={() => {
+                        if (isOutOfStock) {
+                          toast.error(status === "no_record" ? `"${p.name}" has no stock record for this warehouse` : `"${p.name}" is out of stock`, { duration: 3000 });
+                          return;
+                        }
+                        addToCart(p, isBox ? 'box' : null);
+                      }}
                       style={{
                         width: "100%",
                         height: 120,
@@ -771,6 +770,7 @@ export default function POSPage() {
                         overflow: "hidden",
                         flexShrink: 0,
                         position: "relative",
+                        cursor: isOutOfStock ? "not-allowed" : "pointer",
                       }}
                     >
                       {p.image ? (
@@ -837,54 +837,76 @@ export default function POSPage() {
                             padding: "3px 8px",
                             fontSize: 12,
                             fontWeight: 700,
+                            textAlign: "right",
                           }}
                         >
-                          Rs {p.sellingPrice}
+                          Rs {effectiveSellPrice}
+                          {dimLabel && <div style={{ fontSize: 9, fontWeight: 400, opacity: 0.85 }}>{dimLabel}</div>}
                         </div>
                       )}
                     </div>
 
                     {/* Info */}
-                    <div style={{ padding: "10px 12px 12px" }}>
-                      <div
-                        style={{
-                          fontWeight: 600,
-                          fontSize: 14,
-                          color: isOutOfStock ? "var(--text-muted)" : "var(--text)",
-                          lineHeight: 1.3,
-                          marginBottom: 4,
-                          overflow: "hidden",
-                          display: "-webkit-box",
-                          WebkitLineClamp: 2,
-                          WebkitBoxOrient: "vertical",
-                        }}
-                      >
+                    <div
+                      onClick={() => {
+                        if (!canSellLoose && !isOutOfStock) addToCart(p, isBox ? 'box' : null);
+                      }}
+                      style={{ padding: "8px 10px 6px", cursor: (!canSellLoose && !isOutOfStock) ? "pointer" : "default", flex: 1 }}
+                    >
+                      <div style={{ fontWeight: 600, fontSize: 13, color: isOutOfStock ? "var(--text-muted)" : "var(--text)", lineHeight: 1.3, marginBottom: 3, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
                         {p.name}
                       </div>
                       {p.brand?.name && (
-                        <div style={{ fontSize: 11, color: "var(--accent)", fontWeight: 500, marginBottom: 2 }}>
-                          {p.brand.name}
-                        </div>
+                        <div style={{ fontSize: 10, color: "var(--accent)", fontWeight: 500 }}>{p.brand.name}</div>
                       )}
-                      <div style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
-                        {p.sku}
-                      </div>
                       {selectedWarehouse && (
-                        <div style={{
-                          marginTop: 5,
-                          fontSize: 10,
-                          fontWeight: 700,
-                          color: isOutOfStock ? "var(--red)" : isLowStock ? "var(--yellow)" : "var(--green)",
-                        }}>
+                        <div style={{ marginTop: 4, fontSize: 10, fontWeight: 700, color: isOutOfStock ? "var(--red)" : isLowStock ? "var(--yellow)" : "var(--green)" }}>
                           {isOutOfStock
-                            ? (status === "no_record" ? "Not stocked here" : "Out of stock")
-                            : isLowStock
-                            ? `⚠ Low stock: ${stock}`
-                            : `✓ In stock: ${stock}`}
+                            ? (status === "no_record" ? "Not stocked" : "Out of stock")
+                            : isBox
+                            ? `${stock} box${stock !== 1 ? 'es' : ''}${loose > 0 ? ` · ${loose} loose` : ''} (${totalPiecesAvailable} pcs)`
+                            : isLowStock ? `⚠ Low: ${stock}` : `✓ ${stock} in stock`}
                         </div>
                       )}
                     </div>
-                  </button>
+
+                    {/* Add buttons */}
+                    {!isOutOfStock && canSellLoose ? (
+                      <div style={{ display: "flex", gap: 4, padding: "6px 8px", borderTop: "1px solid var(--border)" }}>
+                        <button
+                          onClick={() => addToCart(p, 'box')}
+                          disabled={!stock || stock <= 0}
+                          style={{ flex: 1, padding: "5px 4px", borderRadius: 6, border: "1px solid var(--accent)", background: "var(--accent)18", color: "var(--accent)", fontWeight: 700, cursor: (!stock || stock <= 0) ? "not-allowed" : "pointer", fontSize: 11, opacity: (!stock || stock <= 0) ? 0.4 : 1 }}>
+                          + Box<br />
+                          <span style={{ fontSize: 10, fontWeight: 400 }}>Rs {effectiveSellPrice}</span>
+                        </button>
+                        <button
+                          onClick={() => addToCart(p, 'loose')}
+                          disabled={totalPiecesAvailable <= 0}
+                          title={totalPiecesAvailable > 0 ? `${totalPiecesAvailable} pcs available` : 'No pieces available'}
+                          style={{ flex: 1, padding: "5px 4px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg-elevated)", color: totalPiecesAvailable > 0 ? "var(--text)" : "var(--text-dim)", fontWeight: 700, cursor: totalPiecesAvailable <= 0 ? "not-allowed" : "pointer", fontSize: 11, opacity: totalPiecesAvailable <= 0 ? 0.4 : 1 }}>
+                          + Pcs<br />
+                          <span style={{ fontSize: 10, fontWeight: 400 }}>Rs {loosePricePerPc}</span>
+                        </button>
+                      </div>
+                    ) : !isOutOfStock && isBox ? (
+                      <div style={{ padding: "6px 8px", borderTop: "1px solid var(--border)" }}>
+                        <button
+                          onClick={() => addToCart(p, 'box')}
+                          style={{ width: "100%", padding: "5px", borderRadius: 6, border: "1px solid var(--accent)", background: "var(--accent)18", color: "var(--accent)", fontWeight: 700, cursor: "pointer", fontSize: 11 }}>
+                          + Add Box · Rs {effectiveSellPrice}
+                        </button>
+                      </div>
+                    ) : !isOutOfStock ? (
+                      <div style={{ padding: "6px 8px", borderTop: "1px solid var(--border)" }}>
+                        <button
+                          onClick={() => addToCart(p, null)}
+                          style={{ width: "100%", padding: "5px", borderRadius: 6, border: "1px solid var(--accent)", background: "var(--accent)18", color: "var(--accent)", fontWeight: 700, cursor: "pointer", fontSize: 11 }}>
+                          + Add · Rs {effectiveSellPrice}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                 );
               })}
             </div>
@@ -974,12 +996,33 @@ export default function POSPage() {
             cart.map((item) => {
               const lineTotal = item.unitPrice * item.quantity * (1 - item.discount / 100);
               const hasDiscount = item.discount > 0;
+              const unitLabel = item.sellingUnit === 'box' ? 'Box' : item.sellingUnit === 'loose' ? 'Pcs' : null;
+              const unitColor = item.sellingUnit === 'box' ? 'var(--accent)' : item.sellingUnit === 'loose' ? '#10b981' : null;
               return (
-                <div key={item.product._id} className="cart-item">
+                <div key={item.cartId} className="cart-item">
                   {/* Name row */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
-                    <div style={{ fontWeight: 500, fontSize: 13, lineHeight: 1.3, flex: 1 }}>{item.product.name}</div>
-                    <button onClick={() => removeItem(item.product._id)} style={{ background: "none", border: "none", color: "var(--red)", cursor: "pointer", padding: 2, marginLeft: 4 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 500, fontSize: 13, lineHeight: 1.3, display: "flex", alignItems: "center", gap: 5 }}>
+                        {item.product.name}
+                        {unitLabel && (
+                          <span style={{ fontSize: 10, fontWeight: 700, background: `${unitColor}18`, color: unitColor, borderRadius: 4, padding: "1px 5px", flexShrink: 0 }}>
+                            {unitLabel}
+                          </span>
+                        )}
+                      </div>
+                      {item.sellingUnit === 'loose' && item.product.piecesPerBox && (
+                        <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 1 }}>
+                          loose piece · {item.product.piecesPerBox} pcs/box
+                        </div>
+                      )}
+                      {item.sellingUnit === 'box' && item.product.piecesPerBox && (
+                        <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 1 }}>
+                          whole box · {item.product.piecesPerBox} pcs inside
+                        </div>
+                      )}
+                    </div>
+                    <button onClick={() => removeItem(item.cartId)} style={{ background: "none", border: "none", color: "var(--red)", cursor: "pointer", padding: 2, marginLeft: 4 }}>
                       <Trash2 size={13} />
                     </button>
                   </div>
@@ -987,13 +1030,15 @@ export default function POSPage() {
                   {/* Price + discount inputs */}
                   <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 2 }}>Price</div>
+                      <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 2 }}>
+                        Price {item.sellingUnit === 'loose' ? '(per pc)' : item.sellingUnit === 'box' ? '(per box)' : ''}
+                      </div>
                       <input
                         type="number"
                         className="form-input"
                         style={{ padding: "3px 6px", fontSize: 12, width: "100%" }}
                         value={item.unitPrice}
-                        onChange={(e) => updateItemPrice(item.product._id, e.target.value)}
+                        onChange={(e) => updateItemPrice(item.cartId, e.target.value)}
                       />
                     </div>
                     <div style={{ width: 72 }}>
@@ -1005,7 +1050,7 @@ export default function POSPage() {
                         min="0" max="100"
                         value={item.discount || ""}
                         placeholder="0"
-                        onChange={(e) => updateItemDiscount(item.product._id, e.target.value)}
+                        onChange={(e) => updateItemDiscount(item.cartId, e.target.value)}
                       />
                     </div>
                   </div>
@@ -1013,11 +1058,11 @@ export default function POSPage() {
                   {/* Qty + line total */}
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <button onClick={() => updateQty(item.product._id, -1)} style={{ width: 24, height: 24, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>
+                      <button onClick={() => updateQty(item.cartId, -1)} style={{ width: 24, height: 24, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>
                         <Minus size={12} />
                       </button>
                       <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 600, minWidth: 20, textAlign: "center" }}>{item.quantity}</span>
-                      <button onClick={() => updateQty(item.product._id, 1)} style={{ width: 24, height: 24, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>
+                      <button onClick={() => updateQty(item.cartId, 1)} style={{ width: 24, height: 24, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>
                         <Plus size={12} />
                       </button>
                     </div>

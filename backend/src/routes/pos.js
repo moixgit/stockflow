@@ -38,14 +38,24 @@ router.post('/', async (req, res) => {
 
     // Validate inventory before creating anything
     for (const item of req.body.items) {
-      // Sort descending to pick the record with highest quantity (handles any legacy duplicates)
       const inv = await Inventory.findOne({ product: item.product, warehouse: warehouseId }).sort({ quantity: -1 });
-      const product = await Product.findById(item.product).select('name');
-      if (!inv || inv.quantity < item.quantity)
-        return res.status(400).json({
-          success: false,
-          message: `Insufficient stock for "${product?.name || item.product}" — available: ${inv?.quantity ?? 0}, requested: ${item.quantity}. Make sure you have stock in the selected warehouse.`,
-        });
+      const product = await Product.findById(item.product).select('name productType piecesPerBox');
+      if (item.sellingUnit === 'loose') {
+        // Total available pieces = boxes × piecesPerBox + loose pieces
+        const piecesPerBox = product?.piecesPerBox || 1;
+        const totalPieces = (inv?.quantity ?? 0) * piecesPerBox + (inv?.looseQuantity ?? 0);
+        if (!inv || totalPieces < item.quantity)
+          return res.status(400).json({
+            success: false,
+            message: `Insufficient pieces for "${product?.name || item.product}" — available: ${totalPieces} pcs, requested: ${item.quantity}.`,
+          });
+      } else {
+        if (!inv || inv.quantity < item.quantity)
+          return res.status(400).json({
+            success: false,
+            message: `Insufficient stock for "${product?.name || item.product}" — available: ${inv?.quantity ?? 0}, requested: ${item.quantity}. Make sure you have stock in the selected warehouse.`,
+          });
+      }
     }
 
     const items = await Promise.all(req.body.items.map(async item => {
@@ -76,21 +86,39 @@ router.post('/', async (req, res) => {
     // Deduct inventory
     for (const item of items) {
       const inv = await Inventory.findOne({ product: item.product, warehouse: warehouseId }).sort({ quantity: -1 });
-      const prevQty = inv.quantity;
-      inv.quantity -= item.quantity;
-      await inv.save();
-
-      await InventoryMovement.create({
-        product: item.product,
-        warehouse: warehouseId,
-        type: 'out',
-        quantity: item.quantity,
-        previousQuantity: prevQty,
-        newQuantity: inv.quantity,
-        reference: saleNumber,
-        referenceType: 'sale',
-        performedBy: req.user._id,
-      });
+      if (item.sellingUnit === 'loose') {
+        const product = await Product.findById(item.product).select('piecesPerBox');
+        const piecesPerBox = product?.piecesPerBox || 1;
+        const prevBoxQty = inv.quantity;
+        const prevLoose = inv.looseQuantity || 0;
+        // Deduct from loose first; auto-open boxes for the remainder
+        let loose = prevLoose - item.quantity;
+        while (loose < 0 && inv.quantity > 0) {
+          loose += piecesPerBox;
+          inv.quantity -= 1;
+        }
+        inv.looseQuantity = loose;
+        await inv.save();
+        const note = inv.quantity < prevBoxQty
+          ? `Sold ${item.quantity} pcs loose (opened ${prevBoxQty - inv.quantity} box${prevBoxQty - inv.quantity > 1 ? 'es' : ''})`
+          : `Sold ${item.quantity} pcs loose`;
+        await InventoryMovement.create({
+          product: item.product, warehouse: warehouseId,
+          type: 'out', movementUnit: 'pieces',
+          quantity: item.quantity, previousQuantity: prevLoose, newQuantity: inv.looseQuantity,
+          reference: saleNumber, referenceType: 'sale', notes: note, performedBy: req.user._id,
+        });
+      } else {
+        const prevQty = inv.quantity;
+        inv.quantity -= item.quantity;
+        await inv.save();
+        await InventoryMovement.create({
+          product: item.product, warehouse: warehouseId,
+          type: 'out', movementUnit: item.sellingUnit === 'box' ? 'boxes' : 'pieces',
+          quantity: item.quantity, previousQuantity: prevQty, newQuantity: inv.quantity,
+          reference: saleNumber, referenceType: 'sale', performedBy: req.user._id,
+        });
+      }
     }
 
     res.status(201).json({ success: true, data: sale });
@@ -120,7 +148,13 @@ router.post('/:id/refund', async (req, res) => {
     // Restore inventory
     for (const item of sale.items) {
       const inv = await Inventory.findOne({ product: item.product, warehouse: sale.warehouse });
-      if (inv) { inv.quantity += item.quantity; await inv.save(); }
+      if (!inv) continue;
+      if (item.sellingUnit === 'loose') {
+        inv.looseQuantity = (inv.looseQuantity || 0) + item.quantity;
+      } else {
+        inv.quantity += item.quantity;
+      }
+      await inv.save();
     }
 
     res.json({ success: true, data: sale });

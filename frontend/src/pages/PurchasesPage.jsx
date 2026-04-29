@@ -3,6 +3,7 @@ import api, { BACKEND_URL } from '../utils/api.js';
 import toast from 'react-hot-toast';
 import { Plus, Eye, RefreshCw, Printer, Check, X, ChevronDown, ArrowRight, Truck, Package } from 'lucide-react';
 import { format } from 'date-fns';
+import { calcPricePerPiece, pricingRateLabel, dimensionDisplay } from '../utils/pricing.js';
 
 const fmt = (n) => `Rs ${(n || 0).toFixed(2)}`;
 
@@ -198,17 +199,24 @@ function POModal({ onClose, onSave, vendors, warehouses, editPO = null }) {
       orderedQty: i.orderedQty,
       costPrice: i.costPrice,
       sellingPrice: i.sellingPrice || 0,
+      orderingUnit: i.orderingUnit || 'boxes',
+      priceInputMode: 'piece',  // always 'piece' when loading existing PO
+      vendorRate: '',
     })),
     shippingCost: editPO.shippingCost || 0,
     discountAmount: editPO.discountAmount || 0,
     taxRate: editPO.taxAmount && editPO.subtotal ? ((editPO.taxAmount / editPO.subtotal) * 100).toFixed(2) : 0,
     notes: editPO.notes || '',
     expectedDate: editPO.expectedDate ? editPO.expectedDate.slice(0, 10) : '',
+    poPaymentTerms: editPO.poPaymentTerms || 'credit',
+    advanceAmount: editPO.advanceAmount || 0,
+    advanceMethod: 'cash',
   } : {
     vendor: '', warehouse: '', type: 'standard',
     customer: { name: '', phone: '', email: '' },
-    items: [{ product: '', orderedQty: 1, costPrice: 0, sellingPrice: 0 }],
+    items: [{ product: '', orderedQty: 1, costPrice: '', sellingPrice: '', orderingUnit: 'boxes', priceInputMode: 'piece', vendorRate: '' }],
     shippingCost: 0, discountAmount: 0, taxRate: 0, notes: '', expectedDate: '',
+    poPaymentTerms: 'credit', advanceAmount: 0, advanceMethod: 'cash',
   });
 
   const [products, setProducts] = useState([]);
@@ -220,8 +228,18 @@ function POModal({ onClose, onSave, vendors, warehouses, editPO = null }) {
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
   const setCust = (k, v) => setForm(p => ({ ...p, customer: { ...p.customer, [k]: v } }));
   const setItem = (i, k, v) => setForm(p => ({ ...p, items: p.items.map((it, idx) => idx === i ? { ...it, [k]: v } : it) }));
-  const addItem = () => setForm(p => ({ ...p, items: [...p.items, { product: '', orderedQty: 1, costPrice: 0, sellingPrice: 0 }] }));
+  const setItemMulti = (i, updates) => setForm(p => ({ ...p, items: p.items.map((it, idx) => idx === i ? { ...it, ...updates } : it) }));
+  const addItem = () => setForm(p => ({ ...p, items: [...p.items, { product: '', orderedQty: 1, costPrice: '', sellingPrice: '', orderingUnit: 'boxes', priceInputMode: 'piece', vendorRate: '' }] }));
   const removeItem = (i) => setForm(p => ({ ...p, items: p.items.filter((_, idx) => idx !== i) }));
+
+  // Compute costPrice from a rate input for measurement-based products
+  const rateToUnitCost = (prod, rate, orderingUnit) => {
+    if (!prod || !rate) return '';
+    const ppc = calcPricePerPiece(prod, Number(rate));
+    const isBox = prod.productType === 'box';
+    const result = (isBox && orderingUnit === 'boxes') ? ppc * (prod.piecesPerBox || 1) : ppc;
+    return Math.round(result * 100) / 100;
+  };
 
   const subtotal = form.items.reduce((s, i) => s + (Number(i.orderedQty) * Number(i.costPrice)), 0);
   const saleSubtotal = form.items.reduce((s, i) => s + (Number(i.orderedQty) * Number(i.sellingPrice)), 0);
@@ -319,6 +337,56 @@ function POModal({ onClose, onSave, vendors, warehouses, editPO = null }) {
             </div>
           </div>
 
+          {/* Payment Terms */}
+          <div style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 16px', marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>Payment Terms</div>
+            <div className="form-grid form-grid-3">
+              <div className="form-group">
+                <label className="form-label">Payment Type</label>
+                <select className="form-input" value={form.poPaymentTerms} onChange={e => set('poPaymentTerms', e.target.value)}>
+                  <option value="credit">Credit (Pay after delivery)</option>
+                  <option value="prepaid">Prepaid (Full payment upfront)</option>
+                  <option value="partial">Partial (Advance + remainder later)</option>
+                </select>
+              </div>
+              {(form.poPaymentTerms === 'prepaid' || form.poPaymentTerms === 'partial') && (
+                <div className="form-group">
+                  <label className="form-label">{form.poPaymentTerms === 'prepaid' ? 'Amount Paid (Rs)' : 'Advance Amount (Rs)'}</label>
+                  <input className="form-input" type="number" step="0.01" min="0"
+                    value={form.advanceAmount}
+                    onChange={e => set('advanceAmount', +e.target.value)}
+                    placeholder={form.poPaymentTerms === 'prepaid' ? 'Full amount' : 'Advance paid now'} />
+                </div>
+              )}
+              {(form.poPaymentTerms === 'prepaid' || form.poPaymentTerms === 'partial') && (
+                <div className="form-group">
+                  <label className="form-label">Payment Method</label>
+                  <select className="form-input" value={form.advanceMethod} onChange={e => set('advanceMethod', e.target.value)}>
+                    <option value="cash">Cash</option>
+                    <option value="cheque">Cheque</option>
+                    <option value="bank_transfer">Bank Transfer</option>
+                    <option value="online">Online</option>
+                  </select>
+                </div>
+              )}
+            </div>
+            {form.poPaymentTerms === 'credit' && (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                Full amount will be added to vendor's outstanding balance on delivery.
+              </div>
+            )}
+            {form.poPaymentTerms === 'prepaid' && (
+              <div style={{ fontSize: 11, color: 'var(--green)', marginTop: 4 }}>
+                Full payment upfront — balance will not increase on delivery.
+              </div>
+            )}
+            {form.poPaymentTerms === 'partial' && (
+              <div style={{ fontSize: 11, color: 'var(--orange)', marginTop: 4 }}>
+                Advance recorded now. Remaining balance added to vendor on delivery.
+              </div>
+            )}
+          </div>
+
           {/* Items */}
           <div style={{ marginBottom: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
@@ -334,12 +402,12 @@ function POModal({ onClose, onSave, vendors, warehouses, editPO = null }) {
               <thead>
                 <tr style={{ background: 'var(--bg-elevated)' }}>
                   <th style={{ padding: '8px 10px', textAlign: 'left', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>Product</th>
-                  <th style={{ padding: '8px 6px', textAlign: 'center', width: 70, fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>Qty</th>
-                  <th style={{ padding: '8px 6px', textAlign: 'right', width: 115, fontSize: 11, fontWeight: 600, color: 'var(--orange)' }}>
-                    Vendor Price (Rs) ✎
+                  <th style={{ padding: '8px 6px', textAlign: 'center', width: 100, fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>Qty / Unit</th>
+                  <th style={{ padding: '8px 6px', textAlign: 'right', width: 140, fontSize: 11, fontWeight: 600, color: 'var(--orange)' }}>
+                    Vendor Price ✎
                   </th>
-                  {isDS && <th style={{ padding: '8px 6px', textAlign: 'right', width: 115, fontSize: 11, color: 'var(--accent)', fontWeight: 600 }}>
-                    Selling Price (Rs) ✎
+                  {isDS && <th style={{ padding: '8px 6px', textAlign: 'right', width: 130, fontSize: 11, color: 'var(--accent)', fontWeight: 600 }}>
+                    Selling Price ✎
                   </th>}
                   <th style={{ padding: '8px 10px', textAlign: 'right', width: 90, fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>Total</th>
                   <th style={{ width: 30 }}></th>
@@ -348,55 +416,162 @@ function POModal({ onClose, onSave, vendors, warehouses, editPO = null }) {
               <tbody>
                 {form.items.map((item, i) => {
                   const prod = products.find(p => p._id === item.product);
-                  const defaultCost = prod?.costPrice || 0;
-                  const priceChanged = item.product && Math.abs(item.costPrice - defaultCost) > 0.001;
+                  const isBox = prod?.productType === 'box';
+                  const unit = item.orderingUnit || 'boxes';
+                  const pricingMode = prod?.pricingMode || 'per_piece';
+                  const isMeasured = pricingMode !== 'per_piece';
+                  const inputMode = item.priceInputMode || 'piece';
+
+                  // For rate mode: compute the effective cost from vendorRate
+                  const computedCost = isMeasured && inputMode === 'rate' && item.vendorRate
+                    ? rateToUnitCost(prod, item.vendorRate, unit)
+                    : null;
+                  // The actual costPrice used in totals
+                  const effectiveCost = computedCost !== null ? computedCost : (Number(item.costPrice) || 0);
+                  const effectiveSell = Number(item.sellingPrice) || 0;
+
+                  const unitLabel = isBox && unit === 'boxes' ? 'box' : (prod?.unit || 'pcs');
+                  const rateLabel = pricingMode === 'per_sqm' ? 'sqm' : 'm';
+
                   return (
-                    <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '5px 6px' }}>
+                    <tr key={i} style={{ borderBottom: '1px solid var(--border)', verticalAlign: 'top' }}>
+                      {/* ── Product ── */}
+                      <td style={{ padding: '6px 6px' }}>
                         <select className="form-input" style={{ padding: '6px 8px', fontSize: 12 }} value={item.product}
                           onChange={e => {
                             const p = products.find(x => x._id === e.target.value);
-                            setItem(i, 'product', e.target.value);
-                            if (p) {
-                              setItem(i, 'costPrice', p.costPrice || 0);
-                              if (isDS) setItem(i, 'sellingPrice', p.sellingPrice || 0);
-                            }
+                            setItemMulti(i, {
+                              product: e.target.value,
+                              orderingUnit: (p?.productType === 'box') ? 'boxes' : 'pieces',
+                              costPrice: '',
+                              sellingPrice: '',
+                              priceInputMode: 'piece',
+                              vendorRate: '',
+                            });
                           }}>
                           <option value="">Select product</option>
                           {products.map(p => <option key={p._id} value={p._id}>{p.name} ({p.sku})</option>)}
                         </select>
-                      </td>
-                      <td style={{ padding: '5px 4px' }}>
-                        <input className="form-input" type="number" min="1" style={{ padding: '6px 6px', fontSize: 12, textAlign: 'center' }}
-                          value={item.orderedQty} onChange={e => setItem(i, 'orderedQty', +e.target.value)} />
-                      </td>
-                      <td style={{ padding: '5px 4px' }}>
-                        <input className="form-input" type="number" step="0.01" min="0"
-                          style={{ padding: '6px 6px', fontSize: 12, textAlign: 'right', borderColor: priceChanged ? 'var(--orange)' : undefined }}
-                          value={item.costPrice}
-                          onChange={e => setItem(i, 'costPrice', +e.target.value)} />
-                        {prod && defaultCost > 0 && (
-                          <div style={{ fontSize: 10, color: 'var(--text-muted)', textAlign: 'right', marginTop: 2 }}>
-                            default: {fmt(defaultCost)}
+                        {prod && (
+                          <div style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
+                            {isBox && (
+                              <span style={{ fontSize: 10, fontWeight: 700, background: 'var(--accent)18', color: 'var(--accent)', borderRadius: 4, padding: '1px 6px' }}>
+                                BOX · {prod.piecesPerBox || 1} pcs
+                              </span>
+                            )}
+                            {isMeasured && (
+                              <span style={{ fontSize: 10, fontWeight: 700, background: '#0ea5e918', color: '#0ea5e9', borderRadius: 4, padding: '1px 6px' }}>
+                                {dimensionDisplay(prod)} · {pricingMode === 'per_sqm' ? '/sqm' : '/m'}
+                              </span>
+                            )}
                           </div>
                         )}
                       </td>
+
+                      {/* ── Qty + Unit toggle ── */}
+                      <td style={{ padding: '6px 4px', textAlign: 'center' }}>
+                        <input className="form-input" type="number" min="1"
+                          style={{ padding: '6px', fontSize: 12, textAlign: 'center', width: '100%' }}
+                          value={item.orderedQty} onChange={e => setItem(i, 'orderedQty', +e.target.value)} />
+                        {isBox ? (
+                          <div style={{ display: 'flex', gap: 3, marginTop: 4 }}>
+                            {['boxes', 'loose'].map(u => (
+                              <button key={u} type="button"
+                                onClick={() => setItemMulti(i, { orderingUnit: u, costPrice: '', vendorRate: '' })}
+                                style={{
+                                  flex: 1, padding: '2px 0', fontSize: 10, fontWeight: 700, borderRadius: 4, cursor: 'pointer',
+                                  border: `1px solid ${unit === u ? 'var(--accent)' : 'var(--border)'}`,
+                                  background: unit === u ? 'var(--accent)' : 'transparent',
+                                  color: unit === u ? '#fff' : 'var(--text-muted)',
+                                }}>
+                                {u === 'boxes' ? 'Box' : 'Pcs'}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>
+                            {prod?.unit || 'pcs'}
+                          </div>
+                        )}
+                      </td>
+
+                      {/* ── Vendor Price ── */}
+                      <td style={{ padding: '6px 4px' }}>
+                        {/* For measured products: Rate / Piece toggle */}
+                        {isMeasured && prod && (
+                          <div style={{ display: 'flex', gap: 3, marginBottom: 4 }}>
+                            {[['rate', `Rs/${rateLabel}`], ['piece', `Rs/${unitLabel}`]].map(([mode, label]) => (
+                              <button key={mode} type="button"
+                                onClick={() => setItemMulti(i, { priceInputMode: mode, costPrice: '', vendorRate: '' })}
+                                style={{
+                                  flex: 1, padding: '2px 4px', fontSize: 10, fontWeight: 700, borderRadius: 4, cursor: 'pointer',
+                                  border: `1px solid ${inputMode === mode ? '#0ea5e9' : 'var(--border)'}`,
+                                  background: inputMode === mode ? '#0ea5e9' : 'transparent',
+                                  color: inputMode === mode ? '#fff' : 'var(--text-muted)',
+                                }}>
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Rate input (measurement products in rate mode) */}
+                        {isMeasured && inputMode === 'rate' ? (
+                          <>
+                            <input className="form-input" type="number" step="0.01" min="0" placeholder={`Rs/${rateLabel}`}
+                              style={{ padding: '6px', fontSize: 12, textAlign: 'right', borderColor: '#0ea5e9' }}
+                              value={item.vendorRate}
+                              onChange={e => {
+                                const rate = e.target.value;
+                                const computed = rateToUnitCost(prod, rate, unit);
+                                setItemMulti(i, { vendorRate: rate, costPrice: computed !== '' ? computed : '' });
+                              }} />
+                            {item.vendorRate > 0 && (
+                              <div style={{ fontSize: 10, color: '#0ea5e9', textAlign: 'right', marginTop: 2 }}>
+                                {fmt(calcPricePerPiece(prod, Number(item.vendorRate)))}/pcs
+                                {isBox && unit === 'boxes' && (
+                                  <span style={{ color: 'var(--accent)' }}>
+                                    {' '}→ {fmt(computedCost)}/box
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          /* Direct piece/unit price input */
+                          <input className="form-input" type="number" step="0.01" min="0" placeholder={`Rs/${unitLabel}`}
+                            style={{ padding: '6px', fontSize: 12, textAlign: 'right' }}
+                            value={item.costPrice}
+                            onChange={e => setItem(i, 'costPrice', e.target.value)} />
+                        )}
+                        {!isMeasured && prod && (
+                          <div style={{ fontSize: 10, color: 'var(--text-muted)', textAlign: 'right', marginTop: 2 }}>
+                            Rs/{unitLabel}
+                          </div>
+                        )}
+                      </td>
+
+                      {/* ── Selling Price (DS only) ── */}
                       {isDS && (
-                        <td style={{ padding: '5px 4px' }}>
-                          <input className="form-input" type="number" step="0.01" min="0"
-                            style={{ padding: '6px 6px', fontSize: 12, textAlign: 'right', borderColor: 'var(--accent)' }}
-                            value={item.sellingPrice} onChange={e => setItem(i, 'sellingPrice', +e.target.value)} />
-                          {item.sellingPrice > 0 && item.costPrice > 0 && (
+                        <td style={{ padding: '6px 4px' }}>
+                          <input className="form-input" type="number" step="0.01" min="0" placeholder={`Rs/${unitLabel}`}
+                            style={{ padding: '6px', fontSize: 12, textAlign: 'right', borderColor: 'var(--accent)' }}
+                            value={item.sellingPrice} onChange={e => setItem(i, 'sellingPrice', e.target.value)} />
+                          {effectiveSell > 0 && effectiveCost > 0 && (
                             <div style={{ fontSize: 10, color: 'var(--green)', textAlign: 'right', marginTop: 2 }}>
-                              margin: {fmt(item.sellingPrice - item.costPrice)}
+                              margin: {fmt(effectiveSell - effectiveCost)}
                             </div>
                           )}
                         </td>
                       )}
-                      <td style={{ padding: '5px 8px', textAlign: 'right', fontSize: 13, fontWeight: 600 }}>{fmt(item.orderedQty * item.costPrice)}</td>
-                      <td style={{ padding: '5px 4px' }}>
+
+                      <td style={{ padding: '6px 8px', textAlign: 'right', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                        {fmt(item.orderedQty * effectiveCost)}
+                      </td>
+                      <td style={{ padding: '6px 4px' }}>
                         {form.items.length > 1 && (
-                          <button type="button" onClick={() => removeItem(i)} style={{ background: 'none', border: 'none', color: 'var(--red)', cursor: 'pointer', padding: 4 }}>✕</button>
+                          <button type="button" onClick={() => removeItem(i)}
+                            style={{ background: 'none', border: 'none', color: 'var(--red)', cursor: 'pointer', padding: 4 }}>✕</button>
                         )}
                       </td>
                     </tr>
@@ -453,6 +628,17 @@ function PODetailModal({ po: initialPO, onClose, onRefresh, store }) {
   const [tab, setTab] = useState('details');
   const [changingStatus, setChangingStatus] = useState(false);
   const [receiveQtys, setReceiveQtys] = useState({});
+  const [brokenQtys, setBrokenQtys] = useState({});
+  const [receiveUnits, setReceiveUnits] = useState(() => {
+    const units = {};
+    initialPO.items.forEach(item => {
+      // default to the unit the PO was ordered in, fall back to product type
+      units[item._id] = item.orderingUnit === 'loose' ? 'pieces'
+        : item.product?.productType === 'box' ? 'boxes'
+        : 'pieces';
+    });
+    return units;
+  });
   const [receiving, setReceiving] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [dsForm, setDsForm] = useState({ paymentMethod: 'cash', amountPaid: '', customer: po.customer || { name: '', phone: '', email: '' } });
@@ -476,14 +662,23 @@ function PODetailModal({ po: initialPO, onClose, onRefresh, store }) {
   const handleReceive = async () => {
     const receivedItems = po.items
       .filter(item => receiveQtys[item._id] > 0)
-      .map(item => ({ itemId: item._id, receivedQty: Number(receiveQtys[item._id]) }));
+      .map(item => ({
+        itemId: item._id,
+        receivedQty: Number(receiveQtys[item._id]),
+        brokenQty: Number(brokenQtys[item._id] || 0),
+        receivingUnit: receiveUnits[item._id] || 'boxes',
+      }));
     if (!receivedItems.length) return toast.error('Enter quantities to receive');
+    const overBroken = receivedItems.find(r => r.brokenQty > r.receivedQty);
+    if (overBroken) return toast.error('Broken quantity cannot exceed received quantity');
     setReceiving(true);
     try {
       const res = await api.post(`/purchases/${po._id}/receive`, { receivedItems });
       setPO(res.data);
       setReceiveQtys({});
-      toast.success('Items received and inventory updated');
+      setBrokenQtys({});
+      const totalBroken = receivedItems.reduce((s, r) => s + r.brokenQty, 0);
+      toast.success(totalBroken > 0 ? `Items received — ${totalBroken} broken items auto-logged` : 'Items received and inventory updated');
       onRefresh();
     } catch (err) { toast.error(err?.message || 'Failed'); }
     finally { setReceiving(false); }
@@ -528,6 +723,11 @@ function PODetailModal({ po: initialPO, onClose, onRefresh, store }) {
                 <span className={`badge ${STATUS_META[po.status]?.cls}`}>{STATUS_META[po.status]?.label || po.status}</span>
                 {isDS && <span className="badge badge-purple">Direct Sale</span>}
                 <span className={`badge ${PAY_META[po.paymentStatus]?.cls}`}>{po.paymentStatus}</span>
+                {po.poPaymentTerms && po.poPaymentTerms !== 'credit' && (
+                  <span className={`badge ${po.poPaymentTerms === 'prepaid' ? 'badge-green' : 'badge-orange'}`}>
+                    {po.poPaymentTerms === 'prepaid' ? 'Prepaid' : 'Partial Advance'}
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -541,8 +741,8 @@ function PODetailModal({ po: initialPO, onClose, onRefresh, store }) {
 
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)', padding: '0 20px' }}>
-          {['details', isDS ? 'complete' : 'receive', ...(!isDS ? ['payment'] : []), 'status'].map(t => {
-            const label = t === 'complete' ? 'Complete Sale' : t === 'receive' ? 'Receive Items' : t === 'payment' ? 'Payment' : t.charAt(0).toUpperCase() + t.slice(1);
+          {['details', isDS ? 'complete' : 'receive', 'payment', 'status'].map(t => {
+            const label = t === 'complete' ? 'Complete Sale' : t === 'receive' ? 'Receive Items' : t === 'payment' ? (isDS ? 'Customer Payment' : 'Payment') : t.charAt(0).toUpperCase() + t.slice(1);
             return (
               <button key={t} onClick={() => setTab(t)}
                 style={{ padding: '10px 16px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
@@ -595,21 +795,52 @@ function PODetailModal({ po: initialPO, onClose, onRefresh, store }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {po.items.map((item, i) => (
+                    {po.items.map((item, i) => {
+                      const isBox = item.product?.productType === 'box';
+                      const pricingMode = item.product?.pricingMode || 'per_piece';
+                      const isMeasured = pricingMode !== 'per_piece';
+                      const orderUnit = item.orderingUnit || (isBox ? 'boxes' : 'pieces');
+                      return (
                       <tr key={i}>
-                        <td style={{ fontWeight: 500 }}>{item.product?.name || '—'}</td>
+                        <td style={{ fontWeight: 500 }}>
+                          <div>{item.product?.name || '—'}</div>
+                          <div style={{ display: 'flex', gap: 4, marginTop: 2, flexWrap: 'wrap' }}>
+                            {isBox && (
+                              <span style={{ fontSize: 10, background: 'var(--accent)20', color: 'var(--accent)', padding: '1px 5px', borderRadius: 4, fontWeight: 700 }}>
+                                BOX · {item.product.piecesPerBox || 1} pcs
+                              </span>
+                            )}
+                            {isMeasured && (
+                              <span style={{ fontSize: 10, background: '#0ea5e918', color: '#0ea5e9', padding: '1px 5px', borderRadius: 4, fontWeight: 700 }}>
+                                {dimensionDisplay(item.product)} · {pricingMode === 'per_sqm' ? '/sqm' : '/m'}
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         <td><span className="text-mono" style={{ fontSize: 11 }}>{item.product?.sku || '—'}</span></td>
-                        <td style={{ textAlign: 'center' }}>{item.orderedQty}</td>
+                        <td style={{ textAlign: 'center' }}>
+                          <div>{item.orderedQty}</div>
+                          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                            {isBox ? (orderUnit === 'loose' ? 'pcs' : 'boxes') : (item.product?.unit || 'pcs')}
+                          </div>
+                        </td>
                         {!isDS && <td style={{ textAlign: 'center' }}>
                           <span style={{ color: item.receivedQty >= item.orderedQty ? 'var(--green)' : item.receivedQty > 0 ? 'var(--yellow)' : 'var(--text-muted)' }}>
                             {item.receivedQty || 0}
                           </span>
                         </td>}
-                        <td style={{ textAlign: 'right' }}>{fmt(item.costPrice)}</td>
+                        <td style={{ textAlign: 'right' }}>
+                          <div>{fmt(item.costPrice)}</div>
+                          {isMeasured && item.product?.costPrice > 0 && (
+                            <div style={{ fontSize: 10, color: '#0ea5e9' }}>
+                              {fmt(item.product.costPrice)}{pricingRateLabel(item.product)}
+                            </div>
+                          )}
+                        </td>
                         {isDS && <td style={{ textAlign: 'right', color: 'var(--accent)' }}>{fmt(item.sellingPrice)}</td>}
                         <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(item.total)}</td>
                       </tr>
-                    ))}
+                    ); })}
                   </tbody>
                 </table>
               </div>
@@ -631,6 +862,21 @@ function PODetailModal({ po: initialPO, onClose, onRefresh, store }) {
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 800, marginTop: 4, paddingTop: 8, borderTop: '2px solid var(--border)' }}>
                     <span>Total</span><span style={{ color: 'var(--green)' }}>{fmt(po.grandTotal)}</span>
                   </div>
+                  {po.advanceAmount > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginTop: 4, color: 'var(--green)' }}>
+                      <span>Advance Paid</span><span>-{fmt(po.advanceAmount)}</span>
+                    </div>
+                  )}
+                  {po.paidAmount > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginTop: 4, color: 'var(--green)' }}>
+                      <span>Total Paid</span><span>{fmt(po.paidAmount)}</span>
+                    </div>
+                  )}
+                  {po.grandTotal > po.paidAmount && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginTop: 4, color: 'var(--red)', fontWeight: 600 }}>
+                      <span>Remaining</span><span>{fmt(po.grandTotal - po.paidAmount)}</span>
+                    </div>
+                  )}
                   {isDS && po.saleGrandTotal > 0 && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 700, marginTop: 4, color: 'var(--accent)' }}>
                       <span>Sale Total</span><span>{fmt(po.saleGrandTotal)}</span>
@@ -664,30 +910,76 @@ function PODetailModal({ po: initialPO, onClose, onRefresh, store }) {
                         <th style={{ padding: '8px 10px', textAlign: 'left', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>Product</th>
                         <th style={{ padding: '8px 10px', textAlign: 'center', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>Ordered</th>
                         <th style={{ padding: '8px 10px', textAlign: 'center', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>Already Received</th>
+                        <th style={{ padding: '8px 10px', textAlign: 'center', fontSize: 11, color: 'var(--accent)', fontWeight: 600 }}>Unit</th>
                         <th style={{ padding: '8px 10px', textAlign: 'center', fontSize: 11, color: 'var(--accent)', fontWeight: 600 }}>Receive Now</th>
+                        <th style={{ padding: '8px 10px', textAlign: 'center', fontSize: 11, color: 'var(--red)', fontWeight: 600 }}>Broken on Arrival</th>
                       </tr>
                     </thead>
                     <tbody>
                       {po.items.map(item => {
                         const remaining = item.orderedQty - (item.receivedQty || 0);
+                        const isBox = item.product?.productType === 'box';
+                        const unit = receiveUnits[item._id] || (isBox ? 'boxes' : 'pieces');
                         return (
                           <tr key={item._id} style={{ borderBottom: '1px solid var(--border)' }}>
-                            <td style={{ padding: '8px 10px', fontWeight: 500 }}>{item.product?.name}</td>
-                            <td style={{ padding: '8px 10px', textAlign: 'center' }}>{item.orderedQty}</td>
+                            <td style={{ padding: '8px 10px' }}>
+                              <div style={{ fontWeight: 500 }}>{item.product?.name}</div>
+                              {isBox && (
+                                <div style={{ fontSize: 10, color: 'var(--accent)', marginTop: 2, display: 'flex', gap: 4, alignItems: 'center' }}>
+                                  <span style={{ background: 'var(--accent)20', padding: '1px 5px', borderRadius: 4, fontWeight: 700 }}>BOX</span>
+                                  {item.product?.piecesPerBox > 1 && <span style={{ color: 'var(--text-muted)' }}>{item.product.piecesPerBox} pcs/box</span>}
+                                </div>
+                              )}
+                            </td>
+                            <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                              {item.orderedQty}
+                              {isBox && <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>boxes</div>}
+                            </td>
                             <td style={{ padding: '8px 10px', textAlign: 'center', color: 'var(--text-muted)' }}>{item.receivedQty || 0}</td>
                             <td style={{ padding: '6px 10px', textAlign: 'center' }}>
-                              <input type="number" min="0" max={remaining} className="form-input"
+                              {isBox ? (
+                                <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
+                                  {['boxes', 'pieces'].map(u => (
+                                    <button key={u} type="button" onClick={() => setReceiveUnits(prev => ({ ...prev, [item._id]: u }))}
+                                      style={{
+                                        padding: '3px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                                        border: unit === u ? '1.5px solid var(--accent)' : '1.5px solid var(--border)',
+                                        background: unit === u ? 'var(--accent)15' : 'transparent',
+                                        color: unit === u ? 'var(--accent)' : 'var(--text-muted)',
+                                      }}>{u}</button>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>pcs</span>
+                              )}
+                            </td>
+                            <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                              <input type="number" min="0" className="form-input"
                                 style={{ width: 80, textAlign: 'center', padding: '5px 8px', fontSize: 13 }}
-                                placeholder={`0–${remaining}`}
+                                placeholder="0"
                                 value={receiveQtys[item._id] || ''}
                                 onChange={e => setReceiveQtys(prev => ({ ...prev, [item._id]: e.target.value }))}
                               />
+                            </td>
+                            <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                              <input type="number" min="0" max={receiveQtys[item._id] || 0} className="form-input"
+                                style={{ width: 80, textAlign: 'center', padding: '5px 8px', fontSize: 13, borderColor: brokenQtys[item._id] > 0 ? 'var(--red)' : undefined, color: brokenQtys[item._id] > 0 ? 'var(--red)' : undefined }}
+                                placeholder="0"
+                                value={brokenQtys[item._id] || ''}
+                                onChange={e => setBrokenQtys(prev => ({ ...prev, [item._id]: e.target.value }))}
+                              />
+                              {brokenQtys[item._id] > 0 && (
+                                <div style={{ fontSize: 10, color: 'var(--red)', marginTop: 2 }}>auto-logged</div>
+                              )}
                             </td>
                           </tr>
                         );
                       })}
                     </tbody>
                   </table>
+                  <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 12, color: '#991b1b' }}>
+                    Broken-on-arrival items are automatically logged as shipping breakages and excluded from inventory.
+                  </div>
                   <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                     <button className="btn btn-primary" onClick={handleReceive} disabled={receiving}>
                       <Truck size={14} /> {receiving ? 'Saving…' : 'Receive Items & Update Inventory'}
@@ -707,7 +999,11 @@ function PODetailModal({ po: initialPO, onClose, onRefresh, store }) {
                     <Check size={28} color="#16a34a" />
                   </div>
                   <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>Direct Sale Completed</div>
-                  <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Sale record created. Inventory was not affected.</div>
+                  <div style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 12 }}>Sale record created. Inventory was not affected.</div>
+                  <div style={{ display: 'inline-flex', gap: 8, alignItems: 'center', padding: '8px 16px', borderRadius: 8, background: 'var(--bg-tertiary)', border: '1px solid var(--border)', fontSize: 13 }}>
+                    Payment: <span className={`badge ${PAY_META[po.paymentStatus]?.cls}`}>{po.paymentStatus}</span>
+                    {po.paymentStatus !== 'paid' && <span style={{ color: 'var(--text-muted)' }}>— use Customer Payment tab to record</span>}
+                  </div>
                 </div>
               ) : locked && po.status !== 'direct_sale' ? (
                 <div style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>
@@ -745,50 +1041,59 @@ function PODetailModal({ po: initialPO, onClose, onRefresh, store }) {
             </>
           )}
 
-          {/* ── Payment Tab (Standard PO) ── */}
-          {tab === 'payment' && !isDS && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-                {[
-                  { label: 'Total Amount', value: fmt(po.grandTotal), color: 'var(--text-primary)' },
-                  { label: 'Paid', value: fmt(po.paidAmount || 0), color: 'var(--green)' },
-                  { label: 'Remaining', value: fmt(Math.max(0, po.grandTotal - (po.paidAmount || 0))), color: (po.paidAmount || 0) >= po.grandTotal ? 'var(--green)' : 'var(--red)' },
-                ].map(s => (
-                  <div key={s.label} style={{ background: 'var(--bg-tertiary)', borderRadius: 8, padding: '12px 16px', border: '1px solid var(--border)' }}>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{s.label}</div>
-                    <div style={{ fontSize: 18, fontWeight: 700, color: s.color, fontFamily: 'var(--font-mono)' }}>{s.value}</div>
+          {/* ── Payment Tab (Standard + Direct Sale) ── */}
+          {tab === 'payment' && (() => {
+            const targetAmt = isDS ? (po.saleGrandTotal || po.grandTotal) : po.grandTotal;
+            const remaining = Math.max(0, targetAmt - (po.paidAmount || 0));
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {isDS && (
+                  <div style={{ padding: '10px 14px', background: '#ede9fe20', border: '1px solid #a78bfa40', borderRadius: 8, fontSize: 13, color: 'var(--text-muted)' }}>
+                    Track what the <strong>customer has paid</strong> for this direct sale. Sale total is based on selling prices.
                   </div>
-                ))}
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 6, background: PAY_META[po.paymentStatus]?.cls === 'badge-green' ? '#d1fae520' : PAY_META[po.paymentStatus]?.cls === 'badge-yellow' ? '#fef3c720' : '#fee2e220', width: 'fit-content' }}>
-                <span className={`badge ${PAY_META[po.paymentStatus]?.cls}`}>{po.paymentStatus}</span>
-              </div>
-              {po.paymentStatus !== 'paid' && po.status !== 'cancelled' ? (
-                <div style={{ background: 'var(--bg-tertiary)', borderRadius: 8, padding: '16px', border: '1px solid var(--border)', maxWidth: 360 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 12, color: 'var(--text-primary)' }}>Record Payment</div>
-                  <div className="form-group">
-                    <label className="form-label">Amount (Rs)</label>
-                    <input className="form-input" type="number" step="0.01" min="0.01"
-                      placeholder={`Max: ${fmt(Math.max(0, po.grandTotal - (po.paidAmount || 0)))}`}
-                      value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} />
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                    <button className="btn btn-ghost btn-sm" onClick={() => setPaymentAmount(String(Math.max(0, po.grandTotal - (po.paidAmount || 0)).toFixed(2)))}>
-                      Full Amount
+                )}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+                  {[
+                    { label: isDS ? 'Sale Total' : 'Total Amount', value: fmt(targetAmt), color: 'var(--text-primary)' },
+                    { label: 'Paid', value: fmt(po.paidAmount || 0), color: 'var(--green)' },
+                    { label: 'Remaining', value: fmt(remaining), color: remaining <= 0 ? 'var(--green)' : 'var(--red)' },
+                  ].map(s => (
+                    <div key={s.label} style={{ background: 'var(--bg-tertiary)', borderRadius: 8, padding: '12px 16px', border: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{s.label}</div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: s.color, fontFamily: 'var(--font-mono)' }}>{s.value}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 6, background: PAY_META[po.paymentStatus]?.cls === 'badge-green' ? '#d1fae520' : PAY_META[po.paymentStatus]?.cls === 'badge-yellow' ? '#fef3c720' : '#fee2e220', width: 'fit-content' }}>
+                  <span className={`badge ${PAY_META[po.paymentStatus]?.cls}`}>{po.paymentStatus}</span>
+                </div>
+                {po.paymentStatus !== 'paid' && po.status !== 'cancelled' ? (
+                  <div style={{ background: 'var(--bg-tertiary)', borderRadius: 8, padding: '16px', border: '1px solid var(--border)', maxWidth: 360 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 12, color: 'var(--text-primary)' }}>{isDS ? 'Record Customer Payment' : 'Record Payment'}</div>
+                    <div className="form-group">
+                      <label className="form-label">Amount (Rs)</label>
+                      <input className="form-input" type="number" step="0.01" min="0.01"
+                        placeholder={`Max: ${fmt(remaining)}`}
+                        value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} />
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                      <button className="btn btn-ghost btn-sm" onClick={() => setPaymentAmount(String(remaining.toFixed(2)))}>
+                        Full Amount
+                      </button>
+                    </div>
+                    <button className="btn btn-primary" style={{ marginTop: 12, width: '100%' }} onClick={handleRecordPayment} disabled={recordingPayment}>
+                      {recordingPayment ? <span className="spinner" /> : '✓ Record Payment'}
                     </button>
                   </div>
-                  <button className="btn btn-primary" style={{ marginTop: 12, width: '100%' }} onClick={handleRecordPayment} disabled={recordingPayment}>
-                    {recordingPayment ? <span className="spinner" /> : '✓ Record Payment'}
-                  </button>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', background: '#d1fae520', border: '1px solid var(--green)', borderRadius: 8 }}>
-                  <Check size={18} color="var(--green)" />
-                  <span style={{ color: 'var(--green)', fontWeight: 600 }}>Fully paid</span>
-                </div>
-              )}
-            </div>
-          )}
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', background: '#d1fae520', border: '1px solid var(--green)', borderRadius: 8 }}>
+                    <Check size={18} color="var(--green)" />
+                    <span style={{ color: 'var(--green)', fontWeight: 600 }}>Fully paid</span>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* ── Status Tab ── */}
           {tab === 'status' && (
